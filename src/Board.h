@@ -26,6 +26,7 @@ struct Status
     int      fullmove_counter   = 1;                        // le nombre de coups complets. Il commence à 1 et est incrémenté de 1 après le coup des noirs.
     Bitboard checkers           = 0ULL;                     // bitboard des pièces ennemies me donnant échec
     Bitboard pinned             = 0ULL;                     // bitboard des pièces amies clouées
+    mutable Bitboard threats    = 0ULL;                     // cases attaquées par l'adversaire ; 0 = pas encore calculé
 };
 
 /*
@@ -232,6 +233,16 @@ public:
     //! \brief Retourne le bitboard des cases attaquées avec une occupancy explicite
     template<Color C> [[nodiscard]] Bitboard squares_attacked(Bitboard occ) const noexcept;
 
+    //! \brief  Initialise le bitboard des cases attaquées par l'adversaire, mémorisé dans le Status
+    template<Color C> [[nodiscard]] Bitboard threats_from() const noexcept
+    {
+        assert(C == ~turn());
+        const Status& st = get_status();
+        if (st.threats == 0ULL)
+            st.threats = squares_attacked<C>();      // jamais nul : contient king_moves
+        return st.threats;
+    }
+
     //! \brief  Détermine si la case sq est attaquée par le camp C
     //! \param[in]  sq  case à examiner
     //! \return true si la case est attaquée
@@ -273,6 +284,7 @@ public:
     //-----------------------------------------------------------------
     inline void add_quiet_move(MoveList& ml, const SQUARE from, const SQUARE dest, Piece piece, U32 flags)  const noexcept
     {
+        assert(ml.count < MAX_MOVES);
         ml.mlmoves[ml.count++].move = Move::CODE(from, dest, piece, Piece::PIECE_NONE, Piece::PIECE_NONE, flags);
     }
 
@@ -288,6 +300,7 @@ public:
     //-----------------------------------------------------------------
     inline void add_capture_move(MoveList& ml, const SQUARE from, const SQUARE dest, Piece piece, Piece captured, U32 flags) const noexcept
     {
+        assert(ml.count < MAX_MOVES);
         ml.mlmoves[ml.count++].move  = Move::CODE(from, dest, piece, captured, Piece::PIECE_NONE, flags);
     }
 
@@ -302,6 +315,7 @@ public:
     //-----------------------------------------------------------------
     inline void add_quiet_promotion(MoveList& ml, const SQUARE from, const SQUARE dest, Color color, Piece promoted) const noexcept
     {
+        assert(ml.count < MAX_MOVES);
         ml.mlmoves[ml.count++].move = Move::CODE(from, dest,
                                                  Move::make_piece(color, PieceType::PAWN),
                                                  Piece::PIECE_NONE,
@@ -321,6 +335,7 @@ public:
     //-----------------------------------------------------------------
     inline void add_capture_promotion(MoveList& ml, const SQUARE from, const SQUARE dest, Color color, Piece captured, Piece promoted) const noexcept
     {
+        assert(ml.count < MAX_MOVES);
         ml.mlmoves[ml.count++].move  = Move::CODE(from, dest,
                                                   Move::make_piece(color, PieceType::PAWN),
                                                   captured,
@@ -615,7 +630,7 @@ public:
     {
         if (   can_castle<C, side>()
                && BB::empty(get_rook_path<C, side>() & occupancy_all())
-               && BB::empty(squares_attacked<~C>() & get_king_path<C, side>()) )
+               && BB::empty(threats_from<~C>() & get_king_path<C, side>()) )
         {
             add_quiet_move(ml, get_king_from<C>(), get_king_dest<C, side>(), Move::make_piece(C, PieceType::KING), Move::FLAG_CASTLE_MASK);
         }
@@ -839,14 +854,22 @@ public:
     //! \brief  Retourne le bitboard des pièces amies clouées
     [[nodiscard]] inline Bitboard get_pinned()        const noexcept { return get_status().pinned;            }
 
-    //! \brief  Réserve la capacité de l'historique des positions
-    //! (la capacité ne passe pas avec la copie de l'objet Board)
-    inline void reserve_capacity() {    // la capacité ne passe pas avec la copie
+    //! \brief  Réserve la capacité de l'historique des positions.
+    //! La copie d'un vector ne reporte que la taille, et Search::think reçoit
+    //! son Board par valeur : sans ce reserve, chaque thread réallouerait.
+    //! OPTIMISATION et non obligation : depuis le correctif de make_move, plus
+    //! aucune référence ne survit à une réallocation.
+    inline void reserve_capacity() {
         statusHistory.reserve(MAX_HISTO);
     }
 
 };  // class Board
 
+
+//! \brief  Valeur SEE d'un type de pièce.
+//! Le barème lui-même reste privé à see.cpp ; cet accesseur permet aux attentes
+//! de tests/see.epd d'être écrites symboliquement plutôt qu'en dur.
+[[nodiscard]] int see_value(PieceType pt) noexcept;
 
 
 

@@ -281,7 +281,7 @@ int Search::alpha_beta(Board& board, Timer& timer, int alpha, int beta, int dept
     //  Caractéristiques de la position
     const bool isInCheck  = board.is_in_check();
     const bool isExcluded = si->excluded != Move::MOVE_NONE;
-    si->threats           = board.squares_attacked<THEM>();
+    si->threats           = board.threats_from<THEM>();
 
     // Pour la PVS, le nœud est un PV node si beta - alpha != 1 (full-window = pas une null window)
     // On ne veut pas appliquer la plupart des techniques de pruning sur les PV nodes
@@ -704,9 +704,10 @@ int Search::alpha_beta(Board& board, Timer& timer, int alpha, int beta, int dept
             int sing_beta  = tt_score - depth * Tunable::SEBetaMargin / 16;
             int sing_depth = (depth-1)/2;
 
-            si->excluded = move;
-            int SE_score = alpha_beta<C>(board, timer, sing_beta-1, sing_beta, sing_depth, cut_node, si);
-            si->excluded = Move::MOVE_NONE;
+            si->excluded  = move;
+            int SE_score  = alpha_beta<C>(board, timer, sing_beta-1, sing_beta, sing_depth, cut_node, si);
+            si->excluded  = Move::MOVE_NONE;
+            si->pv.length = 0;  // la SE a écrasé la PV du nœud
 
             if (SE_score < sing_beta)
             {
@@ -747,12 +748,12 @@ int Search::alpha_beta(Board& board, Timer& timer, int alpha, int beta, int dept
 
         if (isQuiet)
         {
-            assert(quiet_count+1 < quiet_moves.size());
+            assert(quiet_count + 1 < std::ssize(quiet_moves));
             quiet_moves[quiet_count++] = move;
         }
         else
         {
-            assert(capture_count+1 < capture_moves.size());
+            assert(capture_count + 1 < std::ssize(capture_moves));
             capture_moves[capture_count++] = move;
         }
 
@@ -848,7 +849,11 @@ int Search::alpha_beta(Board& board, Timer& timer, int alpha, int beta, int dept
                 // Si le score dépasse beta, on a une coupure
                 if (score >= beta)
                 {
-                    history.update_quiet_history(C, si, best_move, board.get_pawn_key(), depth, quiet_count, quiet_moves);
+                    // bonus et malus quiets seulement si le coup gagnant est tranquille ;
+                    // le malus aux captures essayées s'applique dans tous les cas
+                    if (!Move::is_tactical(best_move))
+                        history.update_quiet_history(C, si, best_move, board.get_pawn_key(), depth, quiet_count, quiet_moves);
+
                     history.update_capture_history(si, best_move, depth, capture_count, capture_moves);
 
                     // non, ce coup est trop bon pour l'adversaire
@@ -874,6 +879,7 @@ int Search::alpha_beta(Board& board, Timer& timer, int alpha, int beta, int dept
     best_score = std::min(best_score, max_score);
 
     if(   !isInCheck
+          && !isExcluded
           && (best_move == Move::MOVE_NONE || !Move::is_capturing(best_move))
           && !(bound == BOUND_LOWER && best_score <= si->static_eval)
           && !(bound == BOUND_UPPER && best_score >= si->static_eval))

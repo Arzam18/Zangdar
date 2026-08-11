@@ -15,6 +15,7 @@ static constexpr int BOUND_EXACT = 3;   // PV-node   (Knuth's Type 1) : alpha < 
 class TranspositionTable;
 
 #include <cassert>
+#include "HugePages.h"
 #include "defines.h"
 
 struct HashEntry {
@@ -125,7 +126,10 @@ private:
 
     size_t                      nbr_cluster{};
     U32                         tt_age{};
-    std::vector<HashCluster>    tt_entries = {};
+
+    // HugeArray et non std::vector : un vector passe par l'allocateur ordinaire,
+    // qui n'obtient jamais de huge pages. Voir HugePages.h.
+    HugeArray<HashCluster>      tt_entries;
 
     //==================================================
     //! \brief  Calcule l'index du cluster correspondant à une clé de hachage
@@ -144,7 +148,11 @@ public:
     //--------------------------------------------------
     TranspositionTable() : TranspositionTable(HASH_SIZE) {}
     TranspositionTable(int MB);
-    ~TranspositionTable();
+    ~TranspositionTable() = default;     // tt_entries se libère seule
+
+    // La table possède sa mémoire : pas de copie.
+    TranspositionTable(const TranspositionTable&)            = delete;
+    TranspositionTable& operator=(const TranspositionTable&) = delete;
 
     void init_size(int mbsize);
     //==================================================

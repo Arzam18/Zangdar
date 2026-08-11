@@ -1,4 +1,5 @@
 #include <cstring>
+#include <cstdlib>
 #include <string>
 #include "Uci.h"
 #include "TranspositionTable.h"
@@ -6,6 +7,7 @@
 #include "Attacks.h"
 #include "DataGen.h"
 #include "Cuckoo.h"
+#include "NNUE.h"
 
 // Globals
 TranspositionTable  transpositionTable(HASH_SIZE);
@@ -27,6 +29,7 @@ extern void init_bitmasks();
 //-------------------------------------------------------
 int main(int argCount, char* argValue[])
 {
+    verify_network();
     Attacks::init_masks();
     Cuckoo::init();
 
@@ -35,15 +38,22 @@ int main(int argCount, char* argValue[])
     //          les arguments sont optionnels
     if (argCount > 1 && strcmp(argValue[1], "bench") == 0)
     {
-        Uci* uci = new Uci();
-        uci->bench(argCount, argValue);
+        Uci uci;
+        uci.bench(argCount, argValue);
     }
 
     //  DataGen
     //  appel : Zangdar datagen <nbr_threads> <max_fens_millions> <output_dir>
     else if (argCount > 1 && strcmp(argValue[1], "datagen") == 0)
     {
-        DataGen(std::stoi(std::string{argValue[2]}), std::stoi(std::string{argValue[3]}), std::string{argValue[4]});
+        // Les 3 arguments sont obligatoires
+        if (argCount < 5)
+        {
+            std::cout << "usage : Zangdar datagen <nbr_threads> <max_fens_millions> <output_dir>" << std::endl;
+            return 1;
+        }
+
+        DataGen(atoi(argValue[2]), atoi(argValue[3]), std::string{argValue[4]});
         std::cout << "fin datagen" << std::endl;
     }
 

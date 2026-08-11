@@ -20,7 +20,8 @@ using I32   = int32_t;
 using U32   = uint32_t;
 using I64   = int64_t;
 using U64   = uint64_t;
-using U128  = unsigned __int128;
+// __extension__ : __int128 est une extension GNU, -Wpedantic la signale sinon (g++)
+__extension__ using U128 = unsigned __int128;
 using CHAR  = char;
 using UCHAR = unsigned char;
 
@@ -29,22 +30,21 @@ using MOVE      = U32;
 using SQUARE    = U32;  // pour la clarté du code
 using KEY       = U64;
 
-using TimePoint = std::chrono::high_resolution_clock;
+using TimePoint = std::chrono::steady_clock;    // steady_clock et NON high_resolution_clock : cette horloge ne sert qu'à mesurer des intervalles
 
 template <class T, std::size_t x, std::size_t y>
 using Array2D = std::array<std::array<T, y>, x>;
 
 //-----------------------------------------------------------------------------
-// 33.554.432
 
 static constexpr int MAX_PLY    =  128;     // profondeur max de recherche (en demi-coups)
 static constexpr int MAX_HISTO  = 1024;     // longueur max de l'historique (partie + recherche) (en demi-coups)
-static constexpr int MAX_MOVES  =  400;     // taille max d'une liste de coups (largement au-dessus du max théorique)
+static constexpr int MAX_MOVES  =  256;     // taille max d'une liste de coups. Le maximum théorique pour une position légale est 218
 static constexpr int MAX_TIME   = 60*60*1000;   // 1 heure en ms
 
-static constexpr int HASH_SIZE      = 128;      // en Mo
+static constexpr int HASH_SIZE      = 16;       // en Mo
 static constexpr int MIN_HASH_SIZE  = 1;
-static constexpr int MAX_HASH_SIZE  = 1024;
+static constexpr int MAX_HASH_SIZE  = 16384;    // 16 Go
 
 static constexpr int PAWN_HASH_SIZE = 16384;
 static constexpr int CORR_HASH_SIZE = 16384;        // puissance de 2 : accès par masque
@@ -106,6 +106,7 @@ const std::string BUG_2          = "8/1R6/1p1K1kp1/p6p/P1p2P1P/6P1/1Pn5/8 w - - 
 
 extern void printlog(const std::string& message);
 extern std::vector<std::string> split(const std::string& s, char delimiter);
+extern std::string position_key(const std::string& epd_line);
 
 //======================================
 //! \brief Ecriture en binaire
@@ -126,9 +127,5 @@ void test_eval(const std::string& abc);
 void test_mirror();
 void test_see();
 void test_syzygy(const std::string& fen);
-
-//=========================================================
-//  Définitions pour l'utilisation à la maison
-const std::string MAISON          = "/mnt/Datas/Echecs/Programmation/Zangdar/";   // pour faire les tests
 
 #endif // DEFINES_H

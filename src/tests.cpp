@@ -5,6 +5,11 @@
 #include <iomanip>      // std::setw
 #include <filesystem>
 #include <memory>
+#include <algorithm>
+#include <cctype>
+#include <cstring>
+#include <unordered_set>
+#include <unordered_map>
 
 #include "defines.h"
 #include "Board.h"
@@ -31,8 +36,7 @@ void test_suite(const std::string& abc, int dmax)
     //  perftsuite_ref  : petite suite permettant de voir s'il y a eu perte de perfo
     //  perftsuite_big  : énorme suite pour contrôler le générateur de coups
 
-    std::string     str_file(MAISON);
-    str_file += "tests/perftsuite_" + abc + ".epd";
+    std::string     str_file = "tests/perftsuite_" + abc + ".epd";
 
     std::ifstream file(str_file);
     if (!file.is_open())
@@ -57,12 +61,19 @@ void test_suite(const std::string& abc, int dmax)
     int             passed_tests   = 0;
     int             failed_tests   = 0;
     int             numero         = 0;
-    std::vector<std::string>  poslist;                // liste des positions
-    //    std::string     aa;
     int             indice;
     char            tag = ';';
     char            tag2 = ' ';
 
+    // Détection de doublons de position (même principe que Uci::go_test) :
+    // hash set -> O(1) par position.
+    // On mémorise la 1ʳᵉ apparition pour un message utile, et on saute le doublon :
+    // un perft en double ne teste rien de plus et coûte cher.
+#ifndef NDEBUG
+    std::unordered_set<std::string>           seen_positions;
+    std::unordered_map<std::string, int>      first_location;
+    int             total_dup      = 0;
+#endif
     Board CB;
     auto start = TimePoint::now();
 
@@ -86,21 +97,20 @@ void test_suite(const std::string& abc, int dmax)
         //  2= D2 400
         liste1 = split(line, tag);
 
-        // Extraction de la position
-        // rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR
-        //        aa = liste1[0];
-
-        // Vérification d'unicité de la position
-        // à ne faire qu'une fois
-
-        // if (std::find(poslist.begin(), poslist.end(), aa) ==  poslist.end())
-        //     poslist.push_back(aa);
-        // else
-        // {
-        //     std::cout << "--------------------position en double : ligne " << numero << " : " << aa << std::endl;
-        // }
-
         fen    = liste1.at(0);                  // position fen
+
+        // Doublon de position ? (les compteurs de coups sont ignorés par la clé)
+#ifndef NDEBUG
+        const std::string key = position_key(fen);
+        if (seen_positions.insert(key).second == false)
+        {
+            total_dup++;
+            std::cout << "  DOUBLON ignoré : position déjà vue ligne "
+                      << first_location.at(key) << "  [" << key << "]" << std::endl;
+            continue;
+        }
+        first_location[key] = numero;
+#endif
 
         // int sc = CB->evaluate();
         // printf("%d\n", sc);
@@ -174,6 +184,14 @@ void test_suite(const std::string& abc, int dmax)
     std::cout << "# Passed       " << std::setw(10) << passed_tests << std::endl;
     std::cout << "# Failed       " << std::setw(10) << failed_tests << std::endl;
     std::cout << "# Total        " << std::setw(10) << total_tests << std::endl;
+#ifndef NDEBUG
+    if (total_dup > 0)
+        std::cout << total_dup << " position(s) en double détectée(s) et ignorée(s) ; "
+                  << seen_positions.size() << " positions uniques testées." << std::endl;
+    else
+        std::cout << "Aucune position en double (" << seen_positions.size()
+                  << " positions uniques)." << std::endl;
+#endif
     std::cout << "Moves Actual   " << std::setw(10) << total_actual << std::endl;
     std::cout << "Moves Expected " << std::setw(10) << total_expected << std::endl;
     std::cout << "Time           " << std::setw(9)  << sec << std::endl;
@@ -403,9 +421,8 @@ void test_syzygy(const std::string& fen)
 //----------------------------------------------------
 void test_mirror(void)
 {
-    std::string     str_file(MAISON);
-    // str_file += "tests/mirror.epd";
-    str_file += "tests/1000.epd";
+    // std::string     str_file = "tests/mirror.epd";
+    std::string     str_file = "tests/1000.epd";
 
     std::cout << "[test_mirror]  " << str_file << std::endl;
 
@@ -498,10 +515,130 @@ bool test_mirror(Board& board, const std::string& line)
 //========================================================
 //! \brief  Test de la Static Exchange Evaluation
 //--------------------------------------------------------
+//=========================================================================
+//! \brief  Évaluateur des attentes de tests/see.epd
+//!
+//! Les attentes sont écrites symboliquement (« B - P », « max(0, R - N) »)
+//! et non en dur, pour qu'un changement du barème SEE ne rende pas la suite
+//! fausse. Grammaire :
+//!
+//!     expr    = terme (('+' | '-') terme)*
+//!     terme   = facteur ('*' facteur)*
+//!     facteur = '-' facteur | '(' expr ')' | ('max'|'min') '(' expr ',' expr ')'
+//!             | entier | lettre de pièce (P N B R Q K)
+//=========================================================================
+namespace {
+
+class SeeExpr
+{
+public:
+    explicit SeeExpr(const std::string& source) : s(source) {}
+
+    //! \brief  Évalue l'expression. Rend false si elle est mal formée.
+    bool parse(int& result)
+    {
+        result = expr();
+        skip();
+        return ok && pos == s.size();
+    }
+
+private:
+    const std::string& s;
+    size_t pos = 0;
+    bool   ok  = true;
+
+    void skip() { while (pos < s.size() && std::isspace(static_cast<unsigned char>(s[pos]))) pos++; }
+
+    bool accept(char c)
+    {
+        skip();
+        if (pos < s.size() && s[pos] == c) { pos++; return true; }
+        return false;
+    }
+
+    bool keyword(const char* kw)
+    {
+        skip();
+        const size_t n = std::strlen(kw);
+        if (s.compare(pos, n, kw) != 0)
+            return false;
+        pos += n;
+        return true;
+    }
+
+    int expr()
+    {
+        int v = term();
+        while (ok)
+        {
+            if      (accept('+')) v += term();
+            else if (accept('-')) v -= term();
+            else break;
+        }
+        return v;
+    }
+
+    int term()
+    {
+        int v = factor();
+        while (ok && accept('*'))
+            v *= factor();
+        return v;
+    }
+
+    int factor()
+    {
+        skip();
+        if (pos >= s.size()) { ok = false; return 0; }
+
+        if (accept('-')) return -factor();
+        if (accept('+')) return  factor();
+
+        if (accept('('))
+        {
+            const int v = expr();
+            if (!accept(')')) ok = false;
+            return v;
+        }
+
+        const bool is_max = keyword("max");
+        const bool is_min = is_max ? false : keyword("min");
+        if (is_max || is_min)
+        {
+            if (!accept('(')) { ok = false; return 0; }
+            const int a = expr();
+            if (!accept(',')) { ok = false; return 0; }
+            const int b = expr();
+            if (!accept(')')) { ok = false; return 0; }
+            return is_max ? std::max(a, b) : std::min(a, b);
+        }
+
+        if (std::isdigit(static_cast<unsigned char>(s[pos])))
+        {
+            int v = 0;
+            while (pos < s.size() && std::isdigit(static_cast<unsigned char>(s[pos])))
+                v = v * 10 + (s[pos++] - '0');
+            return v;
+        }
+
+        switch (s[pos++])
+        {
+        case 'P': return see_value(PieceType::PAWN);
+        case 'N': return see_value(PieceType::KNIGHT);
+        case 'B': return see_value(PieceType::BISHOP);
+        case 'R': return see_value(PieceType::ROOK);
+        case 'Q': return see_value(PieceType::QUEEN);
+        case 'K': return see_value(PieceType::KING);
+        default:  ok = false; return 0;
+        }
+    }
+};
+
+} // namespace
+
 void test_see()
 {
-    std::string   str_file(MAISON);
-    str_file += "tests/see.epd";
+    std::string   str_file = "tests/see.epd";
 
     std::ifstream file(str_file);
     if (!file.is_open())
@@ -520,14 +657,26 @@ void test_see()
 
     std::string     aux;
     int             total_tests    = 0;
-    int             passed_tests_b   = 0;
-    int             failed_tests_b   = 0;
-    int             passed_tests_s   = 0;
-    int             failed_tests_s   = 0;
+
+    // Test du signe : fast_see(move, 0) doit avoir le même signe que "score"
+    int             passed_tests_sign = 0;
+    int             failed_tests_sign = 0;
+
+    // Test de la valeur exacte : fast_see(move, score) doit passer,
+    // fast_see(move, score+1) doit échouer
+    int             passed_tests_exact = 0;
+    int             failed_tests_exact = 0;
+
     int             numero         = 0;
-    std::vector<std::string>  poslist;                // liste des positions
-    std::string     aa;
     char            tag = ';';
+
+    // Détection de doublons. L'unité de test est le couple (position, coup) et non
+    // la position seule : plusieurs lignes testent volontairement le même échiquier
+    // avec des coups différents (les 4 promotions). La clé porte sur le coup une
+    // fois RÉSOLU, donc deux notations du même coup (« Nxe5 » et « d3e5 ») sont bien
+    // vues comme un doublon.
+    std::unordered_set<std::string> seen_tests;
+    int             total_dup      = 0;
 
     Board board;
     MoveList ml;
@@ -535,6 +684,11 @@ void test_see()
     // Boucle sur l'ensemble des positions de test
     while (std::getline(file, line))
     {
+        // ATTENTION : fin de ligne différente entre Unix (LF) et Windows (CRLF) !!
+        // Sans cela le \r reste collé au dernier champ et l'attente devient illisible.
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
         // ligne vide
         if (line.size() < 3)
             continue;
@@ -544,42 +698,42 @@ void test_see()
         if (aux == "/" || aux == " " || aux == "#")
             continue;
 
-        numero++;
-        printf("%2d : ", numero);
-
-        //    printf(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>%d \n", numero);
-
         // Extraction des éléments de la ligne
         //  0= position
         //  1= move
         //  2= score
         liste1 = split(line, tag);
 
-        // Extraction de la position
-        // rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR
-        //        aa = liste1[0];
-
-        // Vérification d'unicité de la position
-        //        if (std::find(poslist.begin(), poslist.end(), aa) ==  poslist.end())
-        //            poslist.push_back(aa);
-        //        else
-        //        {
-        //            std::cout << "--------------------position en double : ligne " << numero << " : " << aa << std::endl;
-        //        }
+        // Ligne malformée : sans ce garde-fou, liste1[2] déborde et segfault
+        if (liste1.size() < 3)
+        {
+            printf("ligne mal formée (%zu champs au lieu de 3) : %s\n",
+                   liste1.size(), line.c_str());
+            continue;
+        }
 
         fen   = liste1[0];                  // position fen
         aux   = liste1[1];
 
         strm  = aux.substr(1, aux.size());
-        score = std::stoi(liste1[2]);
+
+        // Attente symbolique : « B - P », « max(0, R - N) », ou un simple entier
+        if (SeeExpr(liste1[2]).parse(score) == false)
+        {
+            printf("attente illisible : « %s » [%s]\n", liste1[2].c_str(), fen.c_str());
+            total_tests++;
+            failed_tests_sign++;
+            failed_tests_exact++;
+            continue;
+        }
 
         board.initialisation();
         board.set_fen(fen, false);
 
         if (board.turn() == WHITE)
-            board.legal_moves<WHITE, MoveGenType::QUIET>(ml);
+            board.legal_moves<WHITE, MoveGenType::ALL>(ml);
         else
-            board.legal_moves<BLACK, MoveGenType::QUIET>(ml);
+            board.legal_moves<BLACK, MoveGenType::ALL>(ml);
 
         move = 0;
 
@@ -590,15 +744,27 @@ void test_see()
             std::string str1 = Move::show(m, 1);
             std::string str2 = Move::show(m, 2);
             std::string str3 = Move::show(m, 3);
+            std::string str4 = Move::show(m, 4);
 
-            //       printf("(%s) : (%s) (%s) (%s) \n", strm.c_str(), str1.c_str(), str2.c_str(), str3.c_str());
-
-            if (strm==str1 || strm==str2 || strm==str3)
+            if (strm==str1 || strm==str2 || strm==str3 || strm==str4)
             {
                 move = m;
                 break;
             }
         }
+
+        // Doublon ? La clé est (position, coup résolu) : deux notations du même
+        // coup sur la même position donnent la même clé.
+        if (move && seen_tests.insert(fen + " | " + std::to_string(move)).second == false)
+        {
+            total_dup++;
+            printf("DOUBLON ignoré : (%s) déjà teste sur [%s]\n", strm.c_str(), fen.c_str());
+            continue;
+        }
+
+        numero++;
+        printf("%2d : ", numero);
+
         if (move)
         {
             bool v = board.fast_see(move, 0);
@@ -620,30 +786,42 @@ void test_see()
             if ((v==true && score>=0) || (v==false && score<0))
             {
                 printf(" : OK ");
-                passed_tests_b++;
+                passed_tests_sign++;
             }
             else
             {
                 printf(" : %s : (%s) seeB=%d score=%d ", fen.c_str(), strm.c_str(), v, score);
-                failed_tests_b++;
+                failed_tests_sign++;
             }
 
-            //            if ((s>=0 && score>=0) || (s<0 && score<0))
-            //            {
-            //                printf(" : OK \n");
-            //                passed_tests_s++;
-            //            }
-            //            else
-            //            {
-            //                printf(" : %s : (%s) seeS=%d score=%d \n", fen.c_str(), strm.c_str(), s, score);
-            //                failed_tests_s++;
-            //            }
+            // Test de la valeur exacte : le seuil "score" doit passer, "score+1" échouer.
+            // Le test de signe ci-dessus n'appelle fast_see qu'avec un seuil nul,
+            // ce qui laisse promotion et prise en passant hors d'atteinte.
+            bool ok_inf = board.fast_see(move, score);
+            bool ok_sup = board.fast_see(move, score+1);
+
+            if (ok_inf == true && ok_sup == false)
+            {
+                printf(" : OK ");
+                passed_tests_exact++;
+            }
+            else
+            {
+                printf(" : EXACT : (%s) see>=%d:%d see>=%d:%d ", strm.c_str(), score, ok_inf, score+1, ok_sup);
+                failed_tests_exact++;
+            }
             printf("\n");
 
             total_tests++;
         }
         else
         {
+            // Coup introuvable : compté comme un échec des deux tests, sinon la ligne
+            // disparaît du bilan et le seul indice est ce message noyé dans la sortie.
+            total_tests++;
+            failed_tests_sign++;
+            failed_tests_exact++;
+
             printf("coup non trouvé %s \n", strm.c_str());
             printf("%s \n", fen.c_str());
             for (size_t i=0; i<ml.count; i++)
@@ -661,11 +839,18 @@ void test_see()
 
     file.close();
 
-    printf("# Passed B     %10u\n",     passed_tests_b);
-    printf("# Passed S     %10u\n",     passed_tests_s);
-    printf("# Failed B     %10u\n",     failed_tests_b);
-    printf("# Failed S     %10u\n",     failed_tests_s);
-    printf("# Total        %10u\n",     total_tests);
+    printf("# Passed sign  %10d\n",     passed_tests_sign);
+    printf("# Passed exact %10d\n",     passed_tests_exact);
+    printf("# Failed sign  %10d\n",     failed_tests_sign);
+    printf("# Failed exact %10d\n",     failed_tests_exact);
+    printf("# Total        %10d\n",     total_tests);
+
+    if (total_dup > 0)
+        std::cout << total_dup << " doublon(s) (position, coup) détecté(s) et ignoré(s) ; "
+                  << seen_tests.size() << " couples uniques testés." << std::endl;
+    else
+        std::cout << "Aucun doublon (" << seen_tests.size()
+                  << " couples (position, coup) uniques)." << std::endl;
 
     std::cout << "********************" << std::endl;
 

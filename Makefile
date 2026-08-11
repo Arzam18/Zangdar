@@ -25,11 +25,6 @@ SRC = src/*.cpp src/pyrrhic/*.cpp
 CPP_FILES = $(shell find $(SRC1) -name "*.cpp")
 OBJ = $(patsubst %.cpp, %.o, $(CPP_FILES))
 
-# Fichiers de dépendances générés par -MMD (voir la règle %.o) : ils indiquent à
-# make quels .o recompiler quand un header change. Sans eux, modifier un .h ne
-# déclenchait aucune recompilation => .o périmés, et crashes à l'exécution.
-DEP = $(OBJ:.o=.d)
-
 ### ==========================================================================
 ### Section 1. General Configuration (Stockfish)
 ### ==========================================================================
@@ -348,7 +343,8 @@ endif
 CFLAGS_COM  = -pipe -std=c++23 -DVERSION=\"$(VERSION)\" $(DEFS) $(CFLAGS_NNUE)
 CFLAGS_REL  = $(CFLAGS_REL1) $(CFLAGS_WARN1) -DNDEBUG -fomit-frame-pointer
 CFLAGS_DBG  = -g -O2
-CFLAGS_WARN = $(CFLAGS_WARN1) $(CFLAGS_WARN2) $(CFLAGS_WARN3) $(CFLAGS_WARN4) $(CFLAGS_WARN5) $(CFLAGS_WARN6)
+# -Wall -Wextra en tête : le -Wno-unused de CFLAGS_WARN5 doit rester le dernier mot
+CFLAGS_WARN = -Wall -Wextra $(CFLAGS_WARN1) $(CFLAGS_WARN2) $(CFLAGS_WARN3) $(CFLAGS_WARN4) $(CFLAGS_WARN5) $(CFLAGS_WARN6)
 CFLAGS_PERF = $(CFLAGS_REL1) $(CFLAGS_WARN1)  -DNDEBUG -g -fno-omit-frame-pointer -DUSE_PROFILING
 
 # Sanitizer build : ASan + UBSan combinés (compatibles entre eux)
@@ -564,18 +560,11 @@ $(EXE): $(OBJ)
 
 src/NNUE.o: $(EVALFILE)
 
-# -MMD : génère, à côté de chaque .o, un .d listant les headers dont il dépend.
-#        (MMD et non MD : on ignore les headers système, qui ne bougent pas.)
-# -MP  : ajoute une cible bidon pour chaque header. Indispensable ici : sans lui,
-#        supprimer ou renommer un header (typiquement en changeant de branche)
-#        casse le build avec « No rule to make target 'src/xxx.h' » au lieu de
-#        simplement recompiler.
-%.o: %.cpp
-	@$(CXX) -o $@ -c $< $(CFLAGS) -MMD -MP
+# pyrrhic (Fathom) est du code TIERS, one ne le modifie pas. 
+src/pyrrhic/tbprobe.o: CFLAGS += -Wno-cast-align -Wno-strict-overflow
 
-# Prise en compte des dépendances calculées au build précédent.
-# Le « - » les rend optionnelles (premier build : aucun .d n'existe encore).
--include $(DEP)
+%.o: %.cpp
+	@$(CXX) -o $@ -c $< $(CFLAGS)
 
 .DELETE_ON_ERROR:
 
@@ -593,7 +582,7 @@ download-net: $(NETS_FILE)
 # traîner les Zangdar-<version>-avx2/bmi2/sse2-*. Le glob Zangdar-* les couvre
 # tous (il n'attrape ni Zangdar.pro ni Zangdar_dev, traités à part).
 clean:
-	@rm -f $(OBJ) $(DEP) $(ZANGDAR_DEV)
+	@rm -f $(OBJ) $(ZANGDAR_DEV)
 	@rm -f $(ZANGDAR)-*
 	@rm -f *.gcda *.profdata *.profraw
 

@@ -17,7 +17,13 @@ Search::Search() : stopFlagPtr(&stopped)
     printlog(message);
 #endif
 
-       init_reductions();
+    // threadPool est une variable globale : ce constructeur tourne AVANT main().
+    // Sans USE_TUNING les Tunable sont des constexpr, donc lisibles ici.
+    // Avec USE_TUNING ce sont des variables inline d'une autre unité, dont
+    // l'initialisation n'est pas ordonnée par rapport à celle-ci.
+#if !defined USE_TUNING
+    init_reductions();
+#endif
 }
 
 //=============================================
@@ -25,8 +31,7 @@ Search::Search() : stopFlagPtr(&stopped)
 //---------------------------------------------
 void Search::init_reductions()
 {
-    Reductions[0][0][0] = 0;
-    Reductions[1][0][0] = 0;
+    std::memset(Reductions, 0, sizeof(Reductions));
 
     for (int d = 1; d < 32; ++d)
         for (int m = 1; m < 32; ++m)
@@ -75,9 +80,9 @@ void Search::show_uci_result(I64 elapsed, const PVariation& pv) const
            << " depth "    << best_depth
            << " seldepth " << seldepth
 
-// time     : le temps de recherche, en ms
-// nodes    : noeuds calculés
-// nps      : nodes par seconde recherchés
+              // time     : le temps de recherche, en ms
+              // nodes    : noeuds calculés
+              // nps      : nodes par seconde recherchés
 
            << " time "       << elapsed
            << " nodes "      << all_nodes
@@ -147,10 +152,10 @@ void Search::update_pv(SearchInfo* si, const MOVE move) const
 
     Accumulator& acc = get_accumulator();
 
-   // Lazy Updates
-   nnue.lazy_updates(board, acc);
+    // Lazy Updates
+    nnue.lazy_updates(board, acc);
 
-   return do_evaluate(board, acc);
+    return do_evaluate(board, acc);
 }
 
 //==========================================
@@ -179,10 +184,10 @@ void Search::update_pv(SearchInfo* si, const MOVE move) const
     constexpr int ScoreDivisor = 330;
 
     int phase = PawnScore   * BB::count_bit(board.occupancy_p<PieceType::PAWN>())
-              + KnightScore * BB::count_bit(board.occupancy_p<PieceType::KNIGHT>())
-              + BishopScore * BB::count_bit(board.occupancy_p<PieceType::BISHOP>())
-              + RookScore   * BB::count_bit(board.occupancy_p<PieceType::ROOK>())
-              + QueenScore  * BB::count_bit(board.occupancy_p<PieceType::QUEEN>());
+            + KnightScore * BB::count_bit(board.occupancy_p<PieceType::KNIGHT>())
+            + BishopScore * BB::count_bit(board.occupancy_p<PieceType::BISHOP>())
+            + RookScore   * BB::count_bit(board.occupancy_p<PieceType::ROOK>())
+            + QueenScore  * BB::count_bit(board.occupancy_p<PieceType::QUEEN>());
 
     value = value * (ScoreBias + phase) / ScoreDivisor;
 

@@ -1,9 +1,11 @@
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <climits>
 #include "defines.h"
 #include <iostream>
 #include <cstring>
+#include "HugePages.h"
 #include "Move.h"
 #include "TranspositionTable.h"
 
@@ -35,13 +37,6 @@ TranspositionTable::TranspositionTable(int MB) :
 }
 
 //========================================================
-//! \brief  Destructeur
-//--------------------------------------------------------
-TranspositionTable::~TranspositionTable()
-{
-}
-
-//========================================================
 //! \brief  Initialisation de la table
 //! \param[in]  mbsize  taille de la table de transposition, en mégaoctets
 //--------------------------------------------------------
@@ -53,7 +48,9 @@ void TranspositionTable::init_size(int mbsize)
     printlog(message);
 #endif
 
-    size_t size  = (mbsize * 1024 * 1024) / sizeof(HashCluster);
+    // Le cast est indispensable : en int, 2048 Mo déborde et donne un nombre de
+    // clusters absurde, 4096 Mo en donne zéro (table vide, index hors bornes).
+    size_t size  = (static_cast<size_t>(mbsize) * 1024 * 1024) / sizeof(HashCluster);
 
     // L'index est calculé par : key & tt_mask
     // if faut que le nombre de clusters soit un multiple de 2
@@ -61,8 +58,25 @@ void TranspositionTable::init_size(int mbsize)
 
     if (size != nbr_cluster)
     {
+        // On alloue AVANT de libérer : si le système refuse, la table en place
+        // reste utilisable.
+        HugeArray<HashCluster> fresh = make_huge_array<HashCluster>(size);
+
+        if (!fresh)
+        {
+            std::cout << "info string hash " << mbsize
+                      << " Mo refuse par le systeme, taille inchangee" << std::endl;
+
+            if (!tt_entries)
+            {
+                std::cout << "info string pas de table de transposition, arret" << std::endl;
+                std::abort();
+            }
+            return;     // pas de clear() : la table courante est intacte
+        }
+
+        tt_entries  = std::move(fresh);     // libère l'ancienne au passage
         nbr_cluster = size;
-        tt_entries.resize(nbr_cluster);
     }
 
     clear();
@@ -87,8 +101,12 @@ void TranspositionTable::clear(void)
 
     tt_age = 0;
 
-    // réinitialise chaque HashCluster à sa valeur par défaut
-    std::fill(tt_entries.begin(), tt_entries.end(), HashCluster{});
+    // Remet chaque HashCluster à zéro. C'est aussi ce premier parcours qui
+    // matérialise les huge pages : sous THP=madvise, madvise() ne fait que marquer
+    // la zone, la promotion n'a lieu qu'au premier accès (même raison que le
+    // tt_clear() d'Ethereal juste après son madvise).
+    if (tt_entries)
+        std::memset(tt_entries.get(), 0, nbr_cluster * sizeof(HashCluster));
 }
 
 //========================================================

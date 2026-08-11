@@ -1,7 +1,9 @@
 #include <cstring>
 #include <cstdlib>
 #include <algorithm>
+#include <iostream>
 #include <map>
+#include "HugePages.h"
 #include "ThreadPool.h"
 #include "Board.h"
 #include "Search.h"
@@ -60,8 +62,26 @@ void ThreadPool::set_threads(U32 nbr)
         if (search)
             stop();
 
+        // On alloue AVANT de libérer : si le système refuse, le pool en place
+        // reste utilisable.
+        HugeArray<Search> fresh = make_huge_array<Search>(newNbr);
+
+        if (!fresh)
+        {
+            std::cout << "info string " << newNbr
+                      << " threads refuses par le systeme, nombre inchange" << std::endl;
+
+            if (!search)
+            {
+                std::cout << "info string pas de thread de recherche, arret" << std::endl;
+                std::abort();
+            }
+            return;
+        }
+
+        search     = std::move(fresh);      // libère l'ancien pool au passage
         nbrThreads = newNbr;
-        search = std::make_unique<Search[]>(nbrThreads);
+
         for (size_t i = 0; i < nbrThreads; i++)
         {
             search[i].table = nullptr;
@@ -156,7 +176,11 @@ void ThreadPool::start_thinking(const Board& board, const Timer& timer)
         // Il faut mettre le lancement des threads dans une boucle séparée
         // car il faut être sur que la Search soit bien créée
         // board et timer sont passés par valeur.
-        for (size_t i = 0; i < nbrThreads; i++)
+        //
+        // Ordre décroissant : la thread 0 est lancée EN DERNIER.
+        // Elle appelle wait(1), qui lit les threads 1..n-1 : elles doivent
+        // déjà être affectées quand elle démarre.
+        for (size_t i = nbrThreads; i-- > 0; )
         {
             if (board.side_to_move == WHITE)
                 search[i].thread = std::thread(&Search::think<WHITE>, &search[i], board, timer, i);

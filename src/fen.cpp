@@ -16,10 +16,10 @@
 //      4) 0       demi-coups pour la règle des 50 coups   : halfmove_counter
 //      5) 1       nombre de coups de la partie            : fullmove_counter
 
-// Le halfmove clock indique un nombre décimal de demi-coups vis-à-vis de la règle des 50 coups.
+// Halfmove clock : indique un nombre décimal de demi-coups vis-à-vis de la règle des 50 coups.
 // Il est remis à zéro après une capture ou un coup de pion, et incrémenté sinon.
 
-// Le nombre de coups complets de la partie.
+// Fullmove clock : Le nombre de coups complets de la partie.
 // Il commence à 1, et est incrémenté après chaque coup des Noirs
 
 // EPD notation : extension de FEN
@@ -30,7 +30,7 @@
 //      1) w       trait aux Blancs
 //      2) KQkq    roques possibles, ou '-'
 //      3) -       case en passant
-//      4) ...     opération, par exemple : bm Re6; id WAC10";
+//      4) ...     opération, par exemple : bm Nc3; id "WAC.016";
 
 //-----------------------------------------------------
 //! \brief Initialisation depuis une position FEN
@@ -86,7 +86,11 @@ void Board::set_fen(const std::string &fen, bool logTactics) noexcept
 
     ss >> word;
     U32 sq = A8;
-    for (const auto &c : word) {
+    for (const auto &c : word)
+    {
+        // sq vaut légitimement N_SQUARES en fin de rangée : seul un '/' peut en sortir
+        assert(sq < N_SQUARES || c == '/');
+
         switch (c) {
         case 'P':
             add_piece(sq, Color::WHITE, Piece::WHITE_PAWN);
@@ -197,11 +201,9 @@ void Board::set_fen(const std::string &fen, bool logTactics) noexcept
 
     std::string ep;
     ss >> ep;
-    if (ep != "-")
+    if (ep.size() >= 2 && ep[0] >= 'a' && ep[0] <= 'h' && ep[1] >= '1' && ep[1] <= '8')
     {
-        char file = ep.at(0);
-        char rank = ep.at(1);
-        SQUARE s = ((rank - '1') * 8 + file - 'a');
+        SQUARE s = ((ep[1] - '1') * 8 + ep[0] - 'a');
         assert(s>=A1 && s<=H8);
         get_status().ep_square = (s);
     }
@@ -215,19 +217,23 @@ void Board::set_fen(const std::string &fen, bool logTactics) noexcept
         //       am Rd6; bm Rb6 Rg5+; id "WAC.274";
         //       bm Bg4 Re2; c0 "Bg4 wins, but Re2 is far better."; id "WAC.252";
 
-        // meilleur coup
         std::string op, auxi;
         size_t p;
 
+        // Un champ non terminé par ';' épuise le flux : toutes les boucles ci-dessous
+        // testent donc l'extraction, sinon "auxi" reste inchangé et on tourne sans fin.
+
         for (int n=0; n<count; n++)
         {
-            ss >> op;
+            if (!(ss >> op))
+                break;
 
             if (op == "bm") // best move
             {
                 while(true)
                 {
-                    ss >> auxi;
+                    if (!(ss >> auxi))
+                        break;
                     p = auxi.find(';');             // indique la fin du champ "bm"
                     if (p == std::string::npos)     // pas trouvé
                     {
@@ -245,7 +251,8 @@ void Board::set_fen(const std::string &fen, bool logTactics) noexcept
             {
                 while(true)
                 {
-                    ss >> auxi;
+                    if (!(ss >> auxi))
+                        break;
                     p = auxi.find(';');             // indique la fin du champ "am"
                     if (p == std::string::npos)     // pas trouvé
                     {
@@ -264,8 +271,9 @@ void Board::set_fen(const std::string &fen, bool logTactics) noexcept
                 std::string total;
                 while(true)
                 {
-                    ss >> auxi;
-                    p = auxi.find(';');             // indique la fin du champ "am"
+                    if (!(ss >> auxi))
+                        break;
+                    p = auxi.find(';');             // indique la fin du champ "id"
                     if (p == std::string::npos)     // pas trouvé
                     {
                         total += auxi;
@@ -273,8 +281,8 @@ void Board::set_fen(const std::string &fen, bool logTactics) noexcept
                     }
                     else
                     {
-                        total += auxi.substr(0, p);;
-                        std::string ident = total; //.substr(0, p);
+                        total += auxi.substr(0, p);
+                        std::string ident = total;
                         if (logTactics)
                             std::cout << std::setw(30) << ident << " : ";
                         break;
@@ -285,15 +293,24 @@ void Board::set_fen(const std::string &fen, bool logTactics) noexcept
             {
                 while(true)
                 {
-                    ss >> auxi;
-                    p = auxi.find(';');             // indique la fin du champ "am"
-                    if (p == std::string::npos)     // pas trouvé
-                    {
-                    }
-                    else
-                    {
+                    if (!(ss >> auxi))
                         break;
-                    }
+                    p = auxi.find(';');             // indique la fin du champ "c0"
+                    if (p != std::string::npos)     // trouvé
+                        break;
+                }
+            }
+            else    // opcode EPD non géré (sm, ce, dm, pv, acn, acs, ...)
+            {
+                // On consomme quand même tout le champ jusqu'au ';', sinon les
+                // champs suivants (dont "id") se décalent et sont perdus.
+                while(true)
+                {
+                    if (!(ss >> auxi))
+                        break;
+                    p = auxi.find(';');
+                    if (p != std::string::npos)
+                        break;
                 }
             }
         }
@@ -301,18 +318,19 @@ void Board::set_fen(const std::string &fen, bool logTactics) noexcept
     else
     {
         // Halfmove clock
-        // Indique un nombre décimal de demi-coups vis-à-vis de la règle des 50 coups.
-        // Remis à zéro après une capture ou un coup de pion, incrémenté sinon.
         ss >> get_status().fiftymove_counter;
 
         // Fullmove clock
-        // Nombre de coups complets de la partie. Commence à 1, incrémenté après chaque coup des Noirs.
         ss >> get_status().fullmove_counter;
 
-        // Nombre de coups : ignoré, on utilise zéro car on compte depuis la racine
+        // Nombre de coups de la partie (gamemove_counter) : ignoré, on compte depuis la racine
     }
 
     //-----------------------------------------
+
+    // Il faut un roi par camp (et un seul) :
+    assert(    BB::count_bit(occupancy_cp<WHITE, PieceType::KING>()) == 1
+            && BB::count_bit(occupancy_cp<BLACK, PieceType::KING>()) == 1);
 
     // pièces attaquant le roi
     (side_to_move == WHITE) ? calculate_checkers_pinned<WHITE>() : calculate_checkers_pinned<BLACK>();
@@ -326,6 +344,17 @@ void Board::set_fen(const std::string &fen, bool logTactics) noexcept
     get_status().pawn_key = pawn_key;
     get_status().non_pawn_key[WHITE] = non_pawn_key[WHITE];
     get_status().non_pawn_key[BLACK] = non_pawn_key[BLACK];
+
+#if !defined NDEBUG && !defined USE_PROFILING
+    // on ne passe ici qu'en debug, et sans vouloir le profiling
+    if (valid() == false)
+    {
+        std::cout << "FEN refusée, retour à la position initiale" << std::endl;
+        initialisation();
+        set_fen(START_FEN, logTactics);
+        return;
+    }
+#endif
 
     //   std::cout << display() << std::endl;
 }
@@ -373,58 +402,62 @@ void Board::mirror_fen(const std::string& fen, bool logTactics)
     // On inverse les couleurs : P (blanc) -> pion noir, p (noir) -> pion blanc
     // et on inverse verticalement les cases
     ss >> word;
-    SQUARE i = A8; // 56;
-    for (const auto &c : word) {
+    SQUARE sq = A8; // 56;
+    for (const auto &c : word)
+    {
+        // sq vaut légitimement N_SQUARES en fin de rangée : seul un '/' peut en sortir
+        assert(sq < N_SQUARES || c == '/');
+
         switch (c) {
         case 'P':
-            add_piece(SQ::mirrorVertically(i), Color::BLACK, Piece::BLACK_PAWN);
-            i++;
+            add_piece(SQ::mirrorVertically(sq), Color::BLACK, Piece::BLACK_PAWN);
+            sq++;
             break;
         case 'p':
-            add_piece(SQ::mirrorVertically(i), Color::WHITE, Piece::WHITE_PAWN);
-            i++;
+            add_piece(SQ::mirrorVertically(sq), Color::WHITE, Piece::WHITE_PAWN);
+            sq++;
             break;
         case 'N':
-            add_piece(SQ::mirrorVertically(i), Color::BLACK, Piece::BLACK_KNIGHT);
-            i++;
+            add_piece(SQ::mirrorVertically(sq), Color::BLACK, Piece::BLACK_KNIGHT);
+            sq++;
             break;
         case 'n':
-            add_piece(SQ::mirrorVertically(i), Color::WHITE, Piece::WHITE_KNIGHT);
-            i++;
+            add_piece(SQ::mirrorVertically(sq), Color::WHITE, Piece::WHITE_KNIGHT);
+            sq++;
             break;
         case 'B':
-            add_piece(SQ::mirrorVertically(i), Color::BLACK, Piece::BLACK_BISHOP);
-            i++;
+            add_piece(SQ::mirrorVertically(sq), Color::BLACK, Piece::BLACK_BISHOP);
+            sq++;
             break;
         case 'b':
-            add_piece(SQ::mirrorVertically(i), Color::WHITE, Piece::WHITE_BISHOP);
-            i++;
+            add_piece(SQ::mirrorVertically(sq), Color::WHITE, Piece::WHITE_BISHOP);
+            sq++;
             break;
         case 'R':
-            add_piece(SQ::mirrorVertically(i), Color::BLACK, Piece::BLACK_ROOK);
-            i++;
+            add_piece(SQ::mirrorVertically(sq), Color::BLACK, Piece::BLACK_ROOK);
+            sq++;
             break;
         case 'r':
-            add_piece(SQ::mirrorVertically(i), Color::WHITE, Piece::WHITE_ROOK);
-            i++;
+            add_piece(SQ::mirrorVertically(sq), Color::WHITE, Piece::WHITE_ROOK);
+            sq++;
             break;
         case 'Q':
-            add_piece(SQ::mirrorVertically(i), Color::BLACK, Piece::BLACK_QUEEN);
-            i++;
+            add_piece(SQ::mirrorVertically(sq), Color::BLACK, Piece::BLACK_QUEEN);
+            sq++;
             break;
         case 'q':
-            add_piece(SQ::mirrorVertically(i), Color::WHITE, Piece::WHITE_QUEEN);
-            i++;
+            add_piece(SQ::mirrorVertically(sq), Color::WHITE, Piece::WHITE_QUEEN);
+            sq++;
             break;
         case 'K':
-            add_piece(SQ::mirrorVertically(i), Color::BLACK, Piece::BLACK_KING);
-            king_square[Color::BLACK] = SQ::mirrorVertically(i);
-            i++;
+            add_piece(SQ::mirrorVertically(sq), Color::BLACK, Piece::BLACK_KING);
+            king_square[Color::BLACK] = SQ::mirrorVertically(sq);
+            sq++;
             break;
         case 'k':
-            add_piece(SQ::mirrorVertically(i), Color::WHITE, Piece::WHITE_KING);
-            king_square[Color::WHITE] = SQ::mirrorVertically(i);
-            i++;
+            add_piece(SQ::mirrorVertically(sq), Color::WHITE, Piece::WHITE_KING);
+            king_square[Color::WHITE] = SQ::mirrorVertically(sq);
+            sq++;
             break;
         case '1':
         case '2':
@@ -434,10 +467,10 @@ void Board::mirror_fen(const std::string& fen, bool logTactics)
         case '6':
         case '7':
         case '8':
-            i += c - '1' + 1;
+            sq += c - '1' + 1;
             break;
         case '/':
-            i -= 16;
+            sq -= 16;
             break;
         default:
             break;
@@ -486,11 +519,9 @@ void Board::mirror_fen(const std::string& fen, bool logTactics)
     // prise en passant
     std::string ep;
     ss >> ep;
-    if (ep != "-")
+    if (ep.size() >= 2 && ep[0] >= 'a' && ep[0] <= 'h' && ep[1] >= '1' && ep[1] <= '8')
     {
-        char file = ep.at(0);
-        char rank = ep.at(1);
-        SQUARE s = ((rank - '1') * 8 + file - 'a');
+        SQUARE s = ((ep[1] - '1') * 8 + ep[0] - 'a');
         assert(s>=A1 && s<=H8);
         get_status().ep_square = SQ::mirrorVertically(s);
     }
@@ -513,7 +544,8 @@ void Board::mirror_fen(const std::string& fen, bool logTactics)
             best_moves.clear();
             while(true)
             {
-                ss >> auxi;
+                if (!(ss >> auxi))
+                    break;
                 p = auxi.find(';');     // indique la fin du champ "bm"
                 if (p == std::string::npos)  // pas trouvé
                 {
@@ -532,7 +564,8 @@ void Board::mirror_fen(const std::string& fen, bool logTactics)
             avoid_moves.clear();
             while(true)
             {
-                ss >> auxi;
+                if (!(ss >> auxi))
+                    break;
                 p = auxi.find(';');     // indique la fin du champ "am"
                 if (p == std::string::npos)  // pas trouvé
                 {
@@ -562,16 +595,12 @@ void Board::mirror_fen(const std::string& fen, bool logTactics)
     else
     {
         // Halfmove clock
-        // Indique un nombre décimal de demi-coups vis-à-vis de la règle des 50 coups.
-        // Remis à zéro après une capture ou un coup de pion, incrémenté sinon.
         ss >> get_status().fiftymove_counter;
 
         // Fullmove clock
-        // Nombre de coups complets de la partie. Commence à 1, incrémenté après chaque coup des Noirs.
         ss >> get_status().fullmove_counter;
 
-        // Nombre de coups : ignoré, on utilise zéro car on compte depuis la racine
-        // get_status().gamemove_counter = 0;
+        // Nombre de coups de la partie (gamemove_counter) : ignoré, on compte depuis la racine
     }
 
     //-----------------------------------------
@@ -735,25 +764,40 @@ void Board::apply_token(const std::string& token)
     int nbr = 0;
 #endif
 
-    for (const auto &mlmove : ml.mlmoves)
+    MOVE found = Move::MOVE_NONE;
+
+    for (size_t index = 0; index < ml.count; index++)
     {
-        if (Move::name(mlmove.move) == token)
+        const MOVE move = ml.mlmoves[index].move;
+
+        if (Move::name(move) == token)
         {
+            // Le coup joué est toujours le PREMIER trouvé, en debug comme en
+            // release : les deux versions doivent jouer exactement le même coup.
+            if (found == Move::MOVE_NONE)
+                found = move;
+
 #ifndef NDEBUG
+            // En debug on poursuit le parcours : le contrôle ci-dessous doit
+            // pouvoir constater qu'aucun AUTRE coup légal ne porte ce nom.
             nbr++;
-#endif
-            make_move<C, false>(accum, mlmove.move);
+#else
+            // En release, le premier trouvé suffit.
             break;
+#endif
         }
     }
 
+    if (found != Move::MOVE_NONE)
+        make_move<C, false>(accum, found);
+
 #ifndef NDEBUG
     if (nbr == 0)
-        printlog("---------------------------nbr 0\n");
+        printlog("--------------------------- coup introuvable : " + token);
     else if (nbr == 1)
         printlog("ok \n") ;
     else
-        printlog("---------------------------nbr > 1 \n");
+        printlog("--------------------------- coup ambigu (" + std::to_string(nbr) + ") : " + token);
 #endif
 
 }
