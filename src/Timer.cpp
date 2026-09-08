@@ -10,15 +10,16 @@
 //! Initialise les limites de temps fournies par le protocole UCI
 //-----------------------------------------------------------
 Timer::Timer(bool _infinite,
-             int _wtime,
-             int _btime,
-             int _winc,
-             int _binc,
-             int _movestogo,
-             int _depth,
-             U64 _nodes,
-             int _movetime,
-             int _moveOverhead)
+             int  _wtime,
+             int  _btime,
+             int  _winc,
+             int  _binc,
+             int  _movestogo,
+             int  _depth,
+             U64  _nodes,
+             int  _movetime,
+             int  _moveOverhead,
+             bool _is_set)
 {
     limits.infinite    = _infinite;
     limits.time[WHITE] = _wtime;
@@ -29,8 +30,10 @@ Timer::Timer(bool _infinite,
     limits.depth       = _depth;
     limits.nodes       = _nodes;
     limits.movetime    = _movetime;
+    limits.is_set      = _is_set;
 
     mode               = TimerMode::TIME;
+    timeBased          = true;
     moveOverhead       = _moveOverhead;
     timeForThisDepth   = 0;
     timeForThisMove    = 0;
@@ -101,11 +104,16 @@ void Timer::setup(Color color)
     else if (limits.movetime != 0) // temps de recherche imposé = move_time
     {
         // Dans ce cas, on n'utilise pas moveOverhead
+        mode                = TimerMode::MOVETIME;
         timeForThisMove     = limits.movetime;
         timeForThisDepth    = limits.movetime;
     }
-    else if (limits.time[color] != 0)
+    else if (limits.is_set)
     {
+        // On teste la PRESENCE de la pendule, pas sa valeur : "go wtime 0 btime 0"
+        // est une pendule au drapeau, il faut jouer tout de suite, pas chercher
+        // indéfiniment.
+
         // CCRL blitz : partie en 2 minutes avec 1 seconde d'incrément
         // CCRL 40/15 : 40 coups en 15 minutes
         // Amateur    : 12 minutes avec 8 secondes d'incrément.
@@ -168,6 +176,8 @@ void Timer::setup(Color color)
         timeForThisMove  = std::min(timeForThisMove,  time_remaining);
     }
 
+    timeBased = (mode == TimerMode::TIME || mode == TimerMode::MOVETIME);
+
 #if defined DEBUG_TIME
     debug(color);
 #endif
@@ -182,6 +192,7 @@ void Timer::setup(Color color)
 void Timer::setup(U64 soft_limit, U64 hard_limit)
 {
     mode              = TimerMode::NODE;
+    timeBased         = false;
     searchDepth       = MAX_PLY;
     nodesForThisDepth = soft_limit;
     nodesForThisMove  = hard_limit;
@@ -205,10 +216,11 @@ bool Timer::check_limits(const int depth, const int index, const U64 total_nodes
 {
     if (index == 0)
     {
-        if (mode == TimerMode::TIME && depth >= 4)
+        if (timeBased && depth >= 4)
         {
             // ce mode est utilisé :
             //  > pour le jeu normal
+            //  > pour les tests tactiques (go movetime)
             // Toutes les MAX_COUNTER itérations, on vérifie si le temps est écoulé.
             if (--counter > 0)
                 return false;
@@ -280,6 +292,11 @@ bool Timer::finishOnThisDepth(int elapsed, int depth, U64 total_nodes, const int
     else if (mode == TimerMode::NODE)
     {
         return (total_nodes > nodesForThisDepth);
+    }
+    else if (mode == TimerMode::MOVETIME)
+    {
+        // Temps imposé : le temps non dépensé est perdu, pas de mise à l'échelle.
+        return (elapsed > timeForThisDepth);
     }
     else
     {

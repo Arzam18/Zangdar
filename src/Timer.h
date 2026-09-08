@@ -9,35 +9,38 @@ class Timer;
 
 enum TimerMode {
     TIME,
+    MOVETIME,
     DEPTH,
     NODE
 };
 
 struct Limits {
-    int  time[2];     // temps restant pour Noirs et Blancs
-    int  incr[2];     // incrément pour Noirs et Blancs
-    int  movestogo;   // coups restants
-    int  depth;       // limite la recherche par profondeur
-    U64  nodes;       // limite la recherche par nombre de nodes cherchés
-    int  movetime;    // limite la recherche par temps
-    bool infinite;    // ignore les limites (recherche infinie)
+    int  time[2];   // temps restant pour Noirs et Blancs
+    int  incr[2];   // incrément pour Noirs et Blancs
+    int  movestogo; // coups restants
+    int  depth;     // limite la recherche par profondeur
+    U64  nodes;     // limite la recherche par nombre de nodes cherchés
+    int  movetime;  // limite la recherche par temps
+    bool infinite;  // ignore les limites (recherche infinie)
+    bool is_set;    // une pendule a été fournie, même à zéro
 
-    Limits() : time{}, incr{}, movestogo(0), depth(0), nodes(0), movetime(0), infinite(false) {}
+    Limits() : time{}, incr{}, movestogo(0), depth(0), nodes(0), movetime(0), infinite(false), is_set(false) {}
 };
 
 class Timer
 {
 public:
-    Timer(bool infinite,
-          int wtime,
-          int btime,
-          int winc,
-          int binc,
-          int movestogo,
-          int depth,
-          U64 nodes,
-          int movetime,
-          int moveOverhead = MOVE_OVERHEAD);
+    Timer(bool _infinite,
+          int  _wtime,
+          int  _btime,
+          int  _winc,
+          int  _binc,
+          int  _movestogo,
+          int  _depth,
+          U64  _nodes,
+          int  _movetime,
+          int  _moveOverhead = MOVE_OVERHEAD,
+          bool _is_set  = false);
 
     //===========================================================
     //! \brief  Constructeur par défaut
@@ -80,6 +83,7 @@ private:
     TimePoint::time_point startTime;
 
     int  mode;
+    bool timeBased;              // mode TIME ou MOVETIME : évite deux comparaisons par noeud
     int  moveOverhead;           // temps de réserve pour l'interface (option UCI MoveOverhead)
     I64  timeForThisDepth;       // temps pour "iterative deepening"
     I64  timeForThisMove;        // temps pour une recherche "alpha-beta" ou "quiescence"

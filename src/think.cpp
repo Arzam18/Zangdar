@@ -406,6 +406,10 @@ int Search::alpha_beta(Board& board, Timer& timer, int alpha, int beta, int dept
         raw_eval = static_eval = si->static_eval;
     }
 
+    // corrplexity : écart entre l'éval brute et l'éval corrigée par la correction
+    // history. Nulle en échec, où raw_eval n'est pas une évaluation.
+    const int corrplexity = isInCheck ? 0 : raw_eval - si->static_eval;
+
 
     // Re-initialise les killer des enfants
     (si+1)->killer1 = Move::MOVE_NONE;
@@ -476,10 +480,8 @@ int Search::alpha_beta(Board& board, Timer& timer, int alpha, int beta, int dept
                 && abs(beta) < MATE_IN_X
                 && board.getNonPawnMaterial<C>())
         {
-            // corrplexity : différence entre eval brute et eval corrigée par correction history.
-            // Positif → on surestimait → marge plus grande (pruning moins agressif).
-            // Négatif → on sous-estimait → marge plus petite (pruning plus agressif).
-            int corrplexity = raw_eval - si->static_eval;
+            // corrplexity positive → on surestimait → marge plus grande (pruning moins agressif).
+            // corrplexity négative → on sous-estimait → marge plus petite (pruning plus agressif).
             int eval_margin = Tunable::SNMPMargin * (depth - improving)
                             + corrplexity * Tunable::SNMPCorrplexityScale / 128;
 
@@ -620,6 +622,11 @@ int Search::alpha_beta(Board& board, Timer& timer, int alpha, int beta, int dept
     while ( (move = movePicker.next_move(skipQuiets).move ) != Move::MOVE_NONE )
     {
         if (move == si->excluded)
+            continue;
+
+        // "go searchmoves" : coup écarté avant tout comptage, il ne doit peser
+        // ni sur move_count (LMP, LMR) ni sur les historiques
+        if (isRoot && !threadPool.is_searchMove(move))
             continue;
 
         const U64  starting_nodes = nodes;
@@ -771,9 +778,10 @@ int Search::alpha_beta(Board& board, Timer& timer, int alpha, int beta, int dept
             // Réduit moins dans les PV nodes
             R -= ttPV + isPV;
 
-            // Réduit moins quand on improving
+            // Réduit plus quand on n'est pas improving
             R += !improving;
 
+            // Réduit plus dans les cut nodes, moins si ttPV
             if (cut_node)
                 R += 2 - ttPV;
 
@@ -786,8 +794,8 @@ int Search::alpha_beta(Board& board, Timer& timer, int alpha, int beta, int dept
             // Ajuste en fonction de l'history
             R -= std::max(-2, std::min(2, hist / Tunable::LMR_HistReductionDivisor));
 
-            // Profondeur après réductions, en évitant de tomber directement en quiescence
-            // TODO vérifier ce newDepth+1
+            // Profondeur après réductions, en évitant de tomber directement en quiescence.
+            // La borne haute laisse une réduction négative étendre d'un ply, pas plus (idiome SF)
             int lmrDepth = std::clamp(newDepth - R, 1, newDepth + 1);
 
             // Recherche ce coup à profondeur réduite :

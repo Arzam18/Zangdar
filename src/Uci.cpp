@@ -408,6 +408,23 @@ void Uci::quit()
 }
 
 //==============================================================
+//! \brief Indique si le jeton est un mot-clé de la commande "go"
+//!
+//! Sert à délimiter la liste de "searchmoves". La liste comprend les
+//! mots-clés non gérés par Zangdar (ponder, mate) : ils doivent quand même
+//! arrêter la liste, sinon ils seraient pris pour des coups.
+//--------------------------------------------------------------
+static bool is_go_keyword(const std::string& token)
+{
+    return    token == "searchmoves" || token == "ponder"
+           || token == "wtime"       || token == "btime"
+           || token == "winc"        || token == "binc"
+           || token == "movestogo"   || token == "depth"
+           || token == "nodes"       || token == "mate"
+           || token == "movetime"    || token == "infinite";
+}
+
+//==============================================================
 //! \brief commande uci : go
 //! Lance la recherche
 //!
@@ -424,9 +441,13 @@ void Uci::parse_go(std::istringstream& iss)
     int depth       = 0;
     U64 nodes       = 0;
     int movetime    = 0;
+    bool is_set = false;   // une pendule a été fournie, même à zéro
 
     // Arrête toute recherche en cours
     Uci::stop();
+
+    // La restriction éventuelle du "go" précédent ne doit pas survivre
+    threadPool.clear_searchMoves();
 
     std::string token;
     token.clear();
@@ -436,7 +457,30 @@ void Uci::parse_go(std::istringstream& iss)
 
     while (iss >> token)
     {
-        if (token == "infinite")
+        if (token == "searchmoves")
+        {
+            // Restreint la recherche aux coups listés. La liste court jusqu'au
+            // prochain mot-clé de la commande "go", qu'il faut alors remettre
+            // dans le flux pour que la boucle le traite normalement.
+            std::streampos previous = iss.tellg();
+
+            while (iss >> token)
+            {
+                if (is_go_keyword(token))
+                {
+                    iss.clear();
+                    iss.seekg(previous);
+                    break;
+                }
+
+                const MOVE move = uci_board.find_move(token);
+                if (move != Move::MOVE_NONE)
+                    threadPool.add_searchMove(move);
+
+                previous = iss.tellg();
+            }
+        }
+        else if (token == "infinite")
         {
             // recherche jusqu'à la commande "stop". Ne pas sortir de la recherche sans y être invité dans ce mode !
             infinite = true;
@@ -445,11 +489,13 @@ void Uci::parse_go(std::istringstream& iss)
         {
             // il reste x msec sur la pendule des Blancs
             iss >> wtime;
+            is_set = true;
         }
         else if (token == "btime")
         {
             // il reste x msec sur la pendule des Noirs
             iss >> btime;
+            is_set = true;
         }
         else if (token == "winc")
         {
@@ -487,7 +533,9 @@ void Uci::parse_go(std::istringstream& iss)
     }
 
     // Initialise le gestionnaire de temps
-    Timer uci_timer(infinite, wtime, btime, winc, binc, movestogo, depth, nodes, movetime, moveOverhead);
+    // Sans pendule ni profondeur ni nodes ni movetime, "go" équivaut à "go infinite" :
+    // on cherche jusqu'à "stop".
+    Timer uci_timer(infinite, wtime, btime, winc, binc, movestogo, depth, nodes, movetime, moveOverhead, is_set);
     uci_timer.start();
     uci_timer.setup(uci_board.side_to_move);
 
@@ -648,9 +696,14 @@ setoption name <id> [value <x>]
         {
             int param;
             iss >> value;      // "value"
-            iss >> param;
-            Tunable::setParam(option_name, param);
-            threadPool.reinit_reductions();
+            // en cas d'échec de lecture, iss met param à 0 : on garde la valeur courante
+            if (iss >> param)
+            {
+                Tunable::setParam(option_name, param);
+                threadPool.reinit_reductions();
+            }
+            else
+                std::cerr << "info string Invalid value for parameter " << option_name << std::endl;
         }
 #endif
 
