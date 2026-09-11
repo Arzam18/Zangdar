@@ -169,9 +169,11 @@ public:
         tt_age = (tt_age + 1) & HashEntry::AgeMask;
     }
 
-    void store(U64 hash, MOVE move, int score, int eval, int bound, int depth, int ply, bool pv);
+    void store(U64 hash, MOVE move, int score, int eval, int bound, int depth, int ply, bool pv,
+               bool only_if_free = false);
     bool probe(U64 hash, int ply, MOVE &code, int &score, int &eval, int &bound, int &depth, bool &pv);
     int  hash_full() const;
+    void occupancy(int& physique, int& age_courant, int& age_precedent, int& eval_seule) const;
 
     //==================================================
     //! \brief  Stocke les scores terminaux comme une distance depuis la position courante jusqu'au mat/TB

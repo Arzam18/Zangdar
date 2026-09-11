@@ -120,7 +120,8 @@ void TranspositionTable::clear(void)
 //! \param[in]  ply    profondeur (distance à la racine) de la position
 //! \param[in]  pv     "true" si le nœud provient d'une ligne principale
 //--------------------------------------------------------
-void TranspositionTable::store(U64 key, MOVE move, int score, int eval, int bound, int depth, int ply, bool pv)
+void TranspositionTable::store(U64 key, MOVE move, int score, int eval, int bound, int depth, int ply, bool pv,
+                               bool only_if_free)
 {
     assert(0 <= depth && depth <= MAX_PLY);
     assert(move != Move::MOVE_NULL);
@@ -138,9 +139,10 @@ void TranspositionTable::store(U64 key, MOVE move, int score, int eval, int boun
     autre   = 88ed2307
     */
 
-    HashCluster& cluster = tt_entries[index(key)];
-    HashEntry *replace = nullptr;
-    auto minValue = std::numeric_limits<I32>::max();
+    HashCluster& cluster  = tt_entries[index(key)];
+    HashEntry*   replace  = nullptr;
+    bool         libre    = false;
+    auto         minValue = std::numeric_limits<I32>::max();
 
     for (auto & entry : cluster.entries)
     {
@@ -153,6 +155,7 @@ void TranspositionTable::store(U64 key, MOVE move, int score, int eval, int boun
         if (entry.key32 == key32 || entry.bound() == BOUND_NONE)
         {
             replace = &entry;
+            libre   = true;
             break;
         }
 
@@ -164,6 +167,11 @@ void TranspositionTable::store(U64 key, MOVE move, int score, int eval, int boun
             minValue = value;
         }
     }
+
+    // Cache d'éval : n'a de valeur que s'il ne coûte rien. Si tout le cluster
+    // porte des résultats de recherche, on renonce plutôt que d'en évincer un.
+    if (only_if_free && !libre)
+        return;
 
     assert(replace != nullptr);
 
@@ -245,6 +253,50 @@ int TranspositionTable::hash_full() const
     }
 
     return used/CLUSTER_SIZE;
+}
+//=================================================================
+//! \brief  Occupation réelle de la table, sur les 1000 premiers clusters.
+//!
+//! Complète hash_full(), qui ne compte que l'âge courant et ignore les entrées
+//! sans coup : celui-ci mesure le remplissage réel, pas l'empreinte de la
+//! recherche en cours.
+//!
+//! \param[out] physique       toute case écrite ; une case vierge est à zéro
+//!                            après le memset de clear(), d'où le test sur key32
+//! \param[out] age_courant    entrées de la recherche en cours
+//! \param[out] age_precedent  entrées de la recherche qui vient de s'achever.
+//!                            think.cpp:82 incrémente tt_age juste après le
+//!                            bestmove, donc une interrogation post-recherche
+//!                            voit age_courant à zéro : c'est celui-ci qu'il
+//!                            faut lire.
+//! \param[out] eval_seule     entrées de cache d'éval, sans résultat de recherche
+//-----------------------------------------------------------------------
+void TranspositionTable::occupancy(int& physique, int& age_courant,
+                                  int& age_precedent, int& eval_seule) const
+{
+    const U32 age_prec = (tt_age - 1) & HashEntry::AgeMask;
+
+    physique = age_courant = age_precedent = eval_seule = 0;
+
+    for (int i = 0; i < 1000; i++)
+    {
+        for (size_t j = 0; j < CLUSTER_SIZE; j++)
+        {
+            const HashEntry& e = tt_entries[i].entries[j];
+            if (e.key32 == 0)
+                continue;
+
+            physique++;
+            if (e.age()   == tt_age)     age_courant++;
+            if (e.age()   == age_prec)   age_precedent++;
+            if (e.bound() == BOUND_NONE) eval_seule++;
+        }
+    }
+
+    physique      /= CLUSTER_SIZE;
+    age_courant   /= CLUSTER_SIZE;
+    age_precedent /= CLUSTER_SIZE;
+    eval_seule    /= CLUSTER_SIZE;
 }
 
 
