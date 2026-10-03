@@ -307,11 +307,11 @@ int Search::alpha_beta(Board& board, Timer& timer, int alpha, int beta, int dept
     //  Recherche de la position actuelle dans la table de transposition
     int   tt_score = VALUE_NONE;
     int   tt_eval  = VALUE_NONE;
-    MOVE  tt_move  = Move::MOVE_NONE;
+    U16   tt_move16 = 0;
     int   tt_bound = BOUND_NONE;
     int   tt_depth = 0;
     bool  tt_pv    = false;
-    bool  tt_hit   = isExcluded ? false : table->probe(board.get_key(), si->ply, tt_move, tt_score, tt_eval, tt_bound, tt_depth, tt_pv);
+    bool  tt_hit   = isExcluded ? false : table->probe(board.get_key(), si->ply, tt_move16, tt_score, tt_eval, tt_bound, tt_depth, tt_pv);
 
     // On fait confiance à la TT si ce n'est pas un pvnode et que la profondeur
     // de l'entrée est suffisamment élevée.
@@ -511,6 +511,7 @@ int Search::alpha_beta(Board& board, Timer& timer, int alpha, int beta, int dept
             si->cont_hist = &history.continuation_history[0][0];
 
             board.make_nullmove<C>();
+            table->prefetch(board.get_key());
             int null_score = -alpha_beta<~C>(board, timer, -beta, -beta + 1, depth - R, !cut_node, si+1);
             board.undo_nullmove<C>();
 
@@ -590,6 +591,9 @@ int Search::alpha_beta(Board& board, Timer& timer, int alpha, int beta, int dept
         }
 
     } // end Pruning
+
+    // Le coup de la TT n'est décodé qu'ici : les coupures et élagages ci-dessus n'en ont pas besoin
+    const MOVE tt_move = table->move16_to_move(board, tt_move16);
 
     //---------------------------------------------------------------------
     // Internal Iterative Deepening.
