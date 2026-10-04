@@ -220,7 +220,7 @@ void MovePicker::score_noisy()
         // MVV (Most Valuable Victim) : valeur de la pièce prise,
         // multipliée pour peser autant que la capture history.
         // La prise en passant est traitée comme les autres prises : le coup porte un pion pris.
-        value = SEE_VALUE[Move::captured_type(move)] * Tunable::MvvLvaFactor;
+        value = see_value(Move::captured_type(move)) * Tunable::MvvLvaFactor;
 
         // Bonus pour la promotion en dame seulement
         if (Move::is_promoting(move) && Move::promoted_type(move) == PieceType::QUEEN)

@@ -10,6 +10,7 @@
 #include "Move.h"
 #include "Attacks.h"
 #include "NNUE.h"
+#include "Tunable.h"
 
 // Structure définissant une position.
 // Elle est destinée à stocker l'historique de make_move.
@@ -875,10 +876,14 @@ public:
 };  // class Board
 
 
-//! \brief  Valeur SEE d'un type de pièce.
-//! Le barème lui-même reste privé à see.cpp ; cet accesseur permet aux attentes
-//! de tests/see.epd d'être écrites symboliquement plutôt qu'en dur.
-[[nodiscard]] int see_value(PieceType pt) noexcept;
+//! \brief  Valeur SEE d'un type de pièce, dans l'unité interne de fast_see (pion = 100).
+//! Comparée à des seuils de la même unité (0, seeMargin) ; sert aussi d'échelle au MVV.
+[[nodiscard]] inline int see_value(PieceType pt) noexcept
+{
+    const int values[N_PIECE_TYPE] = {0, 100, Tunable::SEEValueKnight, Tunable::SEEValueBishop,
+                                      Tunable::SEEValueRook, Tunable::SEEValueQueen, 9999};
+    return values[pt];
+}
 
 
 

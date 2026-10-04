@@ -3,13 +3,6 @@
 #include "Attacks.h"
 
 
-//! \brief  Valeur SEE d'un type de pièce (accesseur déclaré dans Board.h)
-int see_value(PieceType pt) noexcept
-{
-    assert(pt >= PieceType::NONE && pt <= PieceType::KING);
-    return SEE_VALUE[pt];
-}
-
 //==========================================================================
 //! \brief  Détermine si le coup est avantageux :
 //! Teste si la valeur SEE du coup est supérieure ou égale au threshold.
@@ -32,14 +25,14 @@ bool Board::fast_see(const MOVE move, const int threshold) const
     const SQUARE dest = Move::dest(move);
 
     // Gain du coup, ramené au threshold
-    int v = SEE_VALUE[Move::captured_type(move)] - threshold;
+    int v = see_value(Move::captured_type(move)) - threshold;
 
     // Meilleur cas : on prend et on ne perd rien. Insuffisant => échec.
     if (v < 0)
         return false;
 
     // Le pire cas est celui où on perd la pièce prenante.
-    v -= SEE_VALUE[Move::piece_type(move)];
+    v -= see_value(Move::piece_type(move));
 
     // Si la valeur reste positive même après cette perte, l'échange est garanti
     // de battre le threshold.
@@ -113,7 +106,7 @@ bool Board::fast_see(const MOVE move, const int threshold) const
         //
         // et on retranche la pièce qui vient d'être posée sur la case d'arrivée,
         // c'est la prochaine victime.
-        v = -v - 1 - SEE_VALUE[piece];
+        v = -v - 1 - see_value(piece);
 
         // Si le solde reste positif pour le camp qui vient de reprendre, même
         // en perdant la pièce qu'il vient de poser, il gagne l'échange
