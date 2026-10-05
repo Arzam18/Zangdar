@@ -84,13 +84,6 @@ constexpr std::initializer_list<PieceType> all_PIECE_TYPE = {
 };
 
 
-//  Valeur des pièces
-
-constexpr int EGPieceValue[N_PIECE_TYPE] = {
-    0, 221, 676, 701, 1192, 2101, 0
-};
-
-
 //=====================================================
 //! \brief  Convertit un caractère FEN en Piece (majuscule = Blanc, minuscule = Noir)
 //!

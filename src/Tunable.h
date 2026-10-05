@@ -63,6 +63,12 @@ PARAM(FPDepth,                    8, 5, 12);
 PARAM(FPHistoryLimit,         12000, 8000, 16000);
 PARAM(FPHistoryLimitImproving, 6000, 2000, 10000);
 
+// Barème SEE, pion = 100 (fixe) ; sert aussi d'échelle au MVV
+PARAM(SEEValueKnight, 300, 200,  500);
+PARAM(SEEValueBishop, 300, 200,  500);
+PARAM(SEEValueRook,   500, 350,  800);
+PARAM(SEEValueQueen,  900, 700, 1400);
+
 // Static Exchange Evaluation Pruning
 PARAM(SEEPruningDepth,    9,   5,  12);
 PARAM(SEEQuietMargin,   -64, -128,   0);
@@ -85,6 +91,7 @@ PARAM(NMPDivisor, 128, 64, 192);
 PARAM(ProbCutDepth,     5, 1, 8);
 PARAM(ProbCutMargin,  100, 50, 200);
 PARAM(ProbcutReduction, 4, 1, 7);
+PARAM(ProbCutSeeScale, 16, 4, 24);     // seuil SEE = (betaCut - eval) * scale / 16
 
 //  RAZORING
 PARAM(RazoringDepth,    3, 0, 6);
@@ -129,6 +136,13 @@ PARAM(AspirationWindowsExpand, 6667, 4000, 9000);
 
 // Quiescence
 PARAM(DeltaPruningBias,    300, 100, 400);
+
+// Ordonnancement : rend see_value commensurable à la capture history (±16384)
+PARAM(MvvLvaFactor, 16, 4, 32);
+
+// Bonus de promotion. Volontairement sous l'amplitude réelle de la capture history
+// (~6400), pour que celle-ci puisse encore rétrograder une promotion mal notée.
+PARAM(PromoOrderBonus, 2048, 512, 16384);
 
 //  SINGULAR EXTENSION
 PARAM(SEDepth, 8, 5, 11);
