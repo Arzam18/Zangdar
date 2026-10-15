@@ -240,9 +240,15 @@ LDFLAGS_REL  = -s
 #   Targets
 #---------------------------------------------------------------------
 
-# Statique par défaut (Windows, Linux) : un binaire Linux dynamique exige la glibc
-# de la machine qui l'a compilé. STATIC=no pour un lien dynamique. Jamais pour ASan/TSan.
-STATIC ?= yes
+# Linux : dynamique par défaut, comme les autres moteurs. OpenBench compile sur chaque worker,
+# et -static exige libc.a et libstdc++.a, absentes de certaines distributions (Fedora).
+# release (COUT, tournois) et pgo (binaires publiés) : statique, un binaire dynamique exige la glibc
+# de la machine qui l'a compilé. Windows : toujours statique. STATIC=yes|no force le choix. Jamais pour ASan/TSan.
+ifneq ($(filter release pgo,$(MAKECMDGOALS)),)
+    STATIC ?= yes
+else
+    STATIC ?= no
+endif
 LDFLAGS_STATIC =
 
 ifeq ($(target_windows),yes)
@@ -262,6 +268,11 @@ EXE  = $(DEFAULT_EXE)-$(COMP)$(if $(filter yes,$(SIMD)),,-nosimd)
 openbench: EXEC    = $(EXE)$(SUF)
 openbench: CFLAGS  = $(CFLAGS_COM) $(CFLAGS_ARCH) $(CFLAGS_REL)
 openbench: LDFLAGS = $(LDFLAGS_REL) $(LDFLAGS_STATIC) $(LDFLAGS_STACK)
+
+# openbench en statique (sous Linux), avec son propre nom
+release: EXEC    = $(EXE)-rel$(SUF)
+release: CFLAGS  = $(CFLAGS_COM) $(CFLAGS_ARCH) $(CFLAGS_REL)
+release: LDFLAGS = $(LDFLAGS_REL) $(LDFLAGS_STATIC) $(LDFLAGS_STACK)
 
 debug: EXEC    = $(EXE)-dbg$(SUF)
 debug: CFLAGS  = $(CFLAGS_COM) $(CFLAGS_ARCH) $(CFLAGS_WARN) $(CFLAGS_DBG)
@@ -299,12 +310,12 @@ pgo: LDFLAGS = $(LDFLAGS_REL) $(LDFLAGS_STATIC) $(LDFLAGS_STACK)
 
 PGO_BENCH = ./$(EXEC) bench 20 > /dev/null 2>&1
 
-.PHONY: openbench debug sanitize sanitize-thread \
+.PHONY: openbench release debug sanitize sanitize-thread \
         release-nolto release-valgrind release-bounds \
         perf pgo download-net clean
 
 # CFLAGS au lien : la LTO reprend -O3, -march et -pthread (CFLAGS_COM)
-openbench perf debug: $(OBJ)
+openbench release perf debug: $(OBJ)
 	@$(CXX) -o $(EXEC) $^ $(CFLAGS) $(LDFLAGS)
 	@cp $(EXEC) $(ZANGDAR_DEV)
 	@echo "Génération $@ : $(EXEC)"

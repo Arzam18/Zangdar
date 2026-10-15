@@ -23,12 +23,12 @@ jobs:
         cxx:  [g++, clang++]
         arch: [avx2, sse41, sse2]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Le réseau est une release publique de Carbecq/Zangdar-Networks ; on le
       # met en cache pour ne pas le retélécharger à chaque exécution.
       - name: Cache du réseau NNUE
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: networks
           key: net-${{ hashFiles('VERSION.txt') }}
@@ -86,6 +86,18 @@ jobs:
           echo "$out" | grep -qE '# Passed +778' \
             || { echo "::error::778 positions attendues"; exit 1; }
 
+      # Cible release (COUT, tournois ; pgo pour les binaires publiés) : lien statique.
+      # Mêmes .o, make ne fait que relier.
+      - name: Lien statique (release)
+        run: |
+          make -j$(nproc) release CXX=${{ matrix.cxx }} ARCH=${{ matrix.arch }}
+          file -L Zangdar_dev | grep -q 'statically linked' \
+            || { echo "::error::Zangdar_dev n'est pas lié en statique"; file -L Zangdar_dev; exit 1; }
+          nodes=$(./Zangdar_dev bench | grep 'total nodes' | tr -dc '0-9')
+          attendu=$(git log -1 --format=%B | grep -oP 'total nodes = \K\d+' | head -1)
+          [ -z "$attendu" ] || [ "$nodes" = "$attendu" ] \
+            || { echo "::error::en statique, le binaire rend $nodes au lieu de $attendu"; exit 1; }
+
   windows-cross:
     name: windows (mingw, compilation seule)
     runs-on: ubuntu-latest
@@ -94,13 +106,13 @@ jobs:
       matrix:
         arch: [avx2, sse41, sse2]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Installation de mingw-w64
         run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64
 
       - name: Cache du réseau NNUE
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: networks
           key: net-${{ hashFiles('VERSION.txt') }}
@@ -121,7 +133,7 @@ jobs:
     name: cohérence doc / code
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Installation de doxygen
         run: sudo apt-get update && sudo apt-get install -y doxygen
       # Ne produit pas de documentation : vérifie que les blocs //! collent aux
@@ -135,9 +147,9 @@ jobs:
     name: compilation sans avertissement
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Cache du réseau NNUE
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: networks
           key: net-${{ hashFiles('VERSION.txt') }}
