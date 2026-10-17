@@ -4,14 +4,16 @@
 
 // #define DEBUG_GEN
 
-/* bulletformat
- *  each line is of the form <FEN> | <score> | <result>
- *  score is white relative and in centipawns
- *  result is white relative and of the form 1.0 for win, 0.5 for draw, 0.0 for loss
+/* viriformat (voir DataGen.h)
+ *  toutes les positions sont écrites, sans filtre : échecs, prises, scores extrêmes se filtrent au chargement
+ *  score et résultat du point de vue des Blancs ; pas de tables : le tri par Syzygy se fait après coup
 */
 
 #include <string>
 #include <cstring>
+#include <array>
+#include <vector>
+#include <algorithm>
 #include <fstream>
 #include <random>
 #include <memory>
@@ -23,7 +25,6 @@
 #include "defines.h"
 #include "TranspositionTable.h"
 #include "ThreadPool.h"
-#include "pyrrhic/tbprobe.h"
 
 // Pointeur global pour permettre au handler de signal d'arrêter proprement le datagen
 static std::atomic<bool>* g_datagen_run = nullptr;
@@ -53,26 +54,8 @@ DataGen::DataGen(const U32 _nbr_threads, const U32 _max_fens, const std::string&
     //  Initialisations
     //================================================
 
-    // 1) évite d'avoir des positions avec 2 rois seuls
-    // 2) évite d'avoir une partie nulle avec R+T/R sans
-    //    que le mat soit trouvé
-    // 3) SYZYGY est défini dans le Makefile
-    tb_init(SYZYGY);
-
-    // n'utilise les TB que si le chargement a réussi
-    if (TB_LARGEST > 0)
-    {
-        threadPool.set_useSyzygy(true);
-
-        // Sans cet appel, syzygyProbeLimit vaut 0 et le break Syzygy en cours de partie
-        // (DataGen.cpp, boucle de jeu) ne se déclencherait jamais (min(TB_LARGEST,0) = 0).
-        threadPool.set_syzygyProbeLimit(TB_LARGEST);
-    }
-    else
-    {
-        std::cout << "Les tables Syzygy ne sont pas présentes." << std::endl;
-        return;
-    }
+    // Pas de tables : les finales gardent le score de la recherche, le tri se fait après coup
+    threadPool.set_useSyzygy(false);
 
     U32 nbr_threads = set_threads(_nbr_threads);
 
@@ -94,7 +77,7 @@ DataGen::DataGen(const U32 _nbr_threads, const U32 _max_fens, const std::string&
     for (size_t i = 0; i < nbr_threads; i++)
     {
         std::string str_file(_output);
-        str_file += "/data" + std::to_string(i) + ".txt";
+        str_file += "/data" + std::to_string(i) + ".vf";
 
         threads.emplace_back(
                     [this, i, str_file, &total_fens, run] {
@@ -174,15 +157,15 @@ void DataGen::genfens(int thread_id, const std::string& str_file,
     printf("thread id = %d : out = %s \n", thread_id, str_file.c_str());
 
     std::ofstream file;
-    file.open(str_file, std::ios::app);     //app = append ; out = write
+    file.open(str_file, std::ios::app | std::ios::binary);
     if (file.is_open() == false)
     {
         std::cout << "file " << str_file << " not opened" << std::endl;
         return;
     }
 
-    std::array<fenData, 1000> fens{};   // liste des positions conservées, pour une partie donnée
-    int nbr_fens = 0;                   // nombre de positions conservées, pour une partie
+    std::vector<ViriMove> moves;        // coups et scores de la partie en cours
+    moves.reserve(MAX_GAME_PLIES);
     std::random_device rd;
     std::mt19937_64 generator(rd());
 
@@ -200,19 +183,18 @@ void DataGen::genfens(int thread_id, const std::string& str_file,
     std::unique_ptr<Search> search = std::make_unique<Search>();
     search->index  = 0;
 
-    // chaque thread a sa propre table, de façon à éviter
-    // qu'un thread efface la TT pendant qu'un autre est en pleine recherche.
-    // TT réduite (4 Mo) : suffisante pour 5000 nœuds
-    std::unique_ptr<TranspositionTable> table_ptr = std::make_unique<TranspositionTable>(DATAGEN_HASH_SIZE);
-    search->table = table_ptr.get();
+    // chaque thread a ses propres tables, une par camp, comme deux moteurs en match.
+    // DATAGEN_HASH_SIZE Mo chacune : largement assez pour 5000 nœuds
+    std::array<std::unique_ptr<TranspositionTable>, N_COLORS> tables;
+    for (auto& tt : tables)
+        tt = std::make_unique<TranspositionTable>(DATAGEN_HASH_SIZE);
+    search->table = tables[WHITE].get();    // make_move précharge la TT, dès les coups aléatoires
 
     MoveList movelist;
     Board    board;
     int      drawCount = 0;
     int      winCount = 0;
-    bool     use_syzygy;
 
-    std::string  result;  // 0.5 = nulle, 1.0 = victoire Blanc, 0.0 = victoire Noir. = ~Color = 1 - Color
     MOVE    move;
     I32     score;
 
@@ -227,7 +209,8 @@ void DataGen::genfens(int thread_id, const std::string& str_file,
 
         board.initialisation();
         board.set_fen(START_FEN, false);
-        search->table->update_age();            // evite de clear 4 Mo
+        for (auto& tt : tables)
+            tt->update_age();                   // évite de vider les tables
         search->history.reset();
 
         //====================================================
@@ -249,8 +232,26 @@ void DataGen::genfens(int thread_id, const std::string& str_file,
                 board.set_fen(START_FEN, false);
                 return false; // recommencer
             }
-            std::uniform_int_distribution<> distribution{0, int(movelist.size() - 1)};
-            const int index = distribution(generator);
+            // Tirage parmi les coups de SEE >= RANDOM_SEE ; roque, prise en passant et promotion toujours admis
+            std::array<int, MAX_MOVES> candidates;
+            int nbr_candidates = 0;
+            for (size_t k = 0; k < movelist.size(); k++)
+            {
+                const MOVE m = movelist.mlmoves[k].move;
+                if (Move::is_castling(m) || Move::is_enpassant(m) || Move::is_promoting(m) || board.fast_see(m, RANDOM_SEE))
+                    candidates[nbr_candidates++] = static_cast<int>(k);
+            }
+            int index;
+            if (nbr_candidates > 0)
+            {
+                std::uniform_int_distribution<> distribution{0, nbr_candidates - 1};
+                index = candidates[distribution(generator)];
+            }
+            else
+            {
+                std::uniform_int_distribution<> distribution{0, int(movelist.size() - 1)};
+                index = distribution(generator);
+            }
             search->make_move<C, false>(board, movelist.mlmoves[index].move);
 
             // Empêche que le dernier ply soit un mat ou un pat
@@ -287,6 +288,7 @@ void DataGen::genfens(int thread_id, const std::string& str_file,
         move  = Move::MOVE_NONE;
         score = -SCORE_INFINITE;
         timer.setup(Color::WHITE);
+        search->table = tables[board.turn()].get();
 
         if (board.turn() == WHITE)
             data_search<WHITE>(board, timer, *search, move, score);
@@ -299,89 +301,70 @@ void DataGen::genfens(int thread_id, const std::string& str_file,
 
 
         //====================================================
-        //  Boucle de jeu
+        //  Boucle de jeu : la partie est jouée jusqu'au bout
         //----------------------------------------------------
 
-        drawCount   = 0;
-        winCount    = 0;
-        nbr_fens    = 0;
-        use_syzygy  = false;
+        const std::array<U08, 32> start = pack_board(board, WDL_DRAW);
+        moves.clear();
+        U08 wdl      = WDL_DRAW;
+        int game_ply = static_cast<int>(random_plies);
+        drawCount    = 0;
+        winCount     = 0;
         timer.setup(SOFT_NODE_LIMIT, HARD_NODE_LIMIT);
 
-        while (true)
+        while (game_ply < MAX_GAME_PLIES)
         {
             search->nodes   = 0;
             search->stopped = false;
-            search->table->update_age();
 
-            // Partie nulle ?
-            if (board.is_draw(0))
-            {
-                result = COLOR_DRAW;
+            // Partie nulle ? (répétition, 50 coups, matériel insuffisant)
+            if (board.is_draw(0) || board.is_insufficient_material())
                 break;
-            }
 
             if (board.turn() == WHITE)
                 board.legal_moves<WHITE, MoveGenType::ALL>(movelist);
             else
                 board.legal_moves<BLACK, MoveGenType::ALL>(movelist);
 
-            // Aucun coup possible
+            // Aucun coup possible : mat ou pat
             if (movelist.size() == 0)
             {
-                if (board.is_in_check())    // en échec : mat
-                {
-                    result = COLOR_WIN[~board.turn()];
-                }
-                else                        // pas en échec ; pat
-                {
-                    result = COLOR_DRAW;
-                }
+                if (board.is_in_check())
+                    wdl = WDL_WIN[~board.turn()];
                 break;
             }
 
             // Rebase le stack NNUE avant chaque recherche pour éviter l'overflow
             // (head_idx monte de 1 à chaque make_move de la boucle de jeu)
             search->nnue.rebase(board);
+            search->table = tables[board.turn()].get();
+            search->table->update_age();
 
             if (board.turn() == WHITE)
                 data_search<WHITE>(board, timer, *search, move, score);
             else
                 data_search<BLACK>(board, timer, *search, move, score);
 
-
-            //  Filtrage de la position
-            //  On cherche une position tranquille
-            if (    board.is_in_check() == false
-                && !Move::is_capturing(move)
-                && abs(score) < HIGH_SCORE
-                && nbr_fens < static_cast<int>(fens.size()))
-            {
-                fens[nbr_fens++] = { board.get_fen() , score * (1 - 2*board.turn()) };
-            }
-
-            // Si on utilise les tables Syzygy, inutile d'aller plus loin
-            if (BB::count_bit(board.occupancy_all()) <= TB_LARGEST)
-            {
-                use_syzygy = true;
-                break;
-            }
+            // Toutes les positions sont gardées ; score du point de vue des Blancs
+            const int white_score = score * (1 - 2*board.turn());
+            moves.push_back({ viri_move(move),
+                              static_cast<I16>(std::clamp<int>(white_score, -SCORE_CLIP, SCORE_CLIP)) });
 
             // Adjudication de la partie
-            const int absScore = std::abs(score);
+            const int  absScore = std::abs(score);
+            const U08  winner   = white_score > 0 ? WDL_WIN[WHITE] : WDL_WIN[BLACK];
 
             //  Presque mat ?
             if (absScore >= MATE_IN_X)
             {
-                score *= (board.turn() == WHITE ? 1 : -1);
-                result = (score < 0 ? COLOR_WIN[BLACK] : COLOR_WIN[WHITE]);
+                wdl = winner;
                 break;
             }
 
-            if (absScore >= HIGH_SCORE) {       // position gagnante
+            if (absScore >= HIGH_SCORE) {                                // position gagnante
                 winCount++;
                 drawCount = 0;
-            } else if (absScore <= LOW_SCORE) { // position annulante
+            } else if (absScore <= LOW_SCORE && game_ply >= MIN_DRAW_PLY) { // position annulante
                 drawCount++;
                 winCount = 0;
             } else {
@@ -390,13 +373,11 @@ void DataGen::genfens(int thread_id, const std::string& str_file,
             }
 
             // Gain ou Nulle quasiment assuré, inutile d'aller plus loin
-            if (winCount >= MIN_WIN_COUNT) {            // on est presque certain de gagner
-                score *= (board.turn() == WHITE ? 1 : -1);
-                result = (score < 0 ? COLOR_WIN[BLACK] : COLOR_WIN[WHITE]);
+            if (winCount >= MIN_WIN_COUNT) {
+                wdl = winner;
                 break;
             }
-            else if (drawCount >= MIN_DRAW_COUNT) {     // on est presque certain de faire nul
-                result = COLOR_DRAW;
+            else if (drawCount >= MIN_DRAW_COUNT) {
                 break;
             }
 
@@ -405,48 +386,22 @@ void DataGen::genfens(int thread_id, const std::string& str_file,
                 search->make_move<WHITE, true>(board, move);
             else
                 search->make_move<BLACK, true>(board, move);
+            game_ply++;
         }
 
-        // Si on utilise les tables Syzygy, le résultat est exact.
-        if (use_syzygy)
-        {
-            unsigned wdl = tb_probe_wdl(
-                board.occupancy_c<WHITE>(), board.occupancy_c<BLACK>(),
-                board.occupancy_p<PieceType::KING>(),   board.occupancy_p<PieceType::QUEEN>(),
-                board.occupancy_p<PieceType::ROOK>(),   board.occupancy_p<PieceType::BISHOP>(),
-                board.occupancy_p<PieceType::KNIGHT>(), board.occupancy_p<PieceType::PAWN>(),
-                board.get_status().ep_square == SQUARE_NONE ? 0 : board.get_status().ep_square,
-                board.turn() == WHITE ? 1 : 0);
+        if (moves.empty())
+            continue;
 
-            // WDL vu du camp au trait : TB_WIN, ce camp gagne ; TB_LOSS, l'autre
-            if (wdl != TB_RESULT_FAILED)
-            {
-                result = (wdl == TB_WIN)  ? COLOR_WIN[board.turn()] :
-                         (wdl == TB_LOSS) ? COLOR_WIN[~board.turn()] :
-                                            COLOR_DRAW;
-            }
-            else
-            {
-                // fallback : score de la dernière recherche
-                score *= (board.turn() == WHITE ? 1 : -1);
-                result = score < 0 ? COLOR_WIN[BLACK] :
-                         score > 0 ? COLOR_WIN[WHITE] :
-                                     COLOR_DRAW;
-            }
-        }
+        // Ecriture de la partie : position de départ, coups, terminateur
+        std::array<U08, 32> packed = start;
+        packed[30] = wdl;
+        constexpr ViriMove terminator{0, 0};
+        file.write(reinterpret_cast<const char*>(packed.data()), packed.size());
+        file.write(reinterpret_cast<const char*>(moves.data()), static_cast<std::streamsize>(moves.size() * sizeof(ViriMove)));
+        file.write(reinterpret_cast<const char*>(&terminator), sizeof(terminator));
 
-        // Ecriture dans le fichier des fens collectées dans cette partie
-        for (int i = 0; i < nbr_fens; i++)
-        {
-            file << fens[i].fen   << " | "
-                 << fens[i].score << " | "
-                 << result
-                 << "\n";
-        }
-
-        total_fens.fetch_add(nbr_fens);   // total des fens de tous les threads
+        total_fens.fetch_add(moves.size());   // total des positions de tous les threads
         file.flush();   // force l'écriture sur disque : protège contre Ctrl-C / crash
-
 
     } // fin des parties
 
@@ -542,6 +497,70 @@ void DataGen::data_search(Board& board, Timer& timer, Search& search,
 
     move  = search.pv_moves[search.best_depth];
     score = search.pv_scores[search.best_depth];
+}
+
+//============================================================================
+//! \brief  Position au format marlinformat (32 octets, petit-boutiste)
+//! \param[in]  board   position à encoder
+//! \param[in]  wdl     résultat de la partie, du point de vue des Blancs
+//----------------------------------------------------------------------------
+std::array<U08, 32> DataGen::pack_board(const Board& board, U08 wdl)
+{
+    std::array<U08, 32> out{};
+
+    const Bitboard occupancy = board.occupancy_all();
+    std::memcpy(out.data(), &occupancy, sizeof(occupancy));
+
+    // un quartet par pièce, cases croissantes : type (P=0 … K=5, 6 = tour qui peut roquer) | couleur << 3
+    const U32 castling = board.get_status().castling;
+    Bitboard  bb       = occupancy;
+    int       i        = 0;
+    while (bb)
+    {
+        const SQUARE sq = BB::pop_lsb(bb);
+        const Piece  pc = board.piece_at(sq);
+        U08 code = static_cast<U08>(Move::type(pc)) - 1;
+        if (Move::type(pc) == PieceType::ROOK
+            && (   (sq == H1 && (castling & CASTLE_WK)) || (sq == A1 && (castling & CASTLE_WQ))
+                || (sq == H8 && (castling & CASTLE_BK)) || (sq == A8 && (castling & CASTLE_BQ))))
+            code = 6;
+        code |= static_cast<U08>(Move::color(pc)) << 3;
+        out[8 + i/2] |= (i & 1) ? static_cast<U08>(code << 4) : code;
+        i++;
+    }
+
+    const SQUARE ep = board.get_ep_square();
+    out[24] = static_cast<U08>((board.turn() << 7) | (ep == SQUARE_NONE ? 64 : ep));
+    out[25] = static_cast<U08>(std::min(board.get_fiftymove_counter(), 255));
+    const U16 fullmove = static_cast<U16>(board.get_fullmove_counter());
+    std::memcpy(&out[26], &fullmove, sizeof(fullmove));
+    // out[28..29] : éval de la position de départ, inutilisée (0)
+    out[30] = wdl;
+    // out[31] : extra (0)
+    return out;
+}
+
+//============================================================================
+//! \brief  Coup au format viriformat : départ | arrivée << 6 | promotion << 12 | type << 14
+//! Roque : le roi va sur la case de la tour
+//----------------------------------------------------------------------------
+U16 DataGen::viri_move(MOVE move)
+{
+    const U16 from = static_cast<U16>(Move::from(move));
+    const U16 to   = static_cast<U16>(Move::dest(move));
+
+    if (Move::is_castling(move))
+    {
+        const U16 rook = (to > from) ? from + 3 : from - 4;
+        return static_cast<U16>(from | (rook << 6) | 0x8000);
+    }
+
+    const U16 data = static_cast<U16>(from | (to << 6));
+    if (Move::is_promoting(move))
+        return static_cast<U16>(data | ((Move::promoted_type(move) - PieceType::KNIGHT) << 12) | 0xC000);
+    if (Move::is_enpassant(move))
+        return static_cast<U16>(data | 0x4000);
+    return data;
 }
 
 //===================================================
