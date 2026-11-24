@@ -28,14 +28,14 @@ endif
 include VERSION.txt
 
 #---------------------------------------------------
-#  Tables Syzygy locales : commande UCI « yyy » et datagen
+#  Tables Syzygy locales : commande « yyy » seulement
 #  (à changer sur une autre machine)
 #  Répertoires séparés par « ; » sous Windows, « : » sous Unix, sans espace
 #---------------------------------------------------
 ifeq ($(target_windows),yes)
     SYZYGY = D:/Echecs/Syzygy/345;D:/Echecs/Syzygy/6
 else
-    SYZYGY = /mnt/Datas/Echecs/Syzygy/345:/mnt/Datas/Echecs/Syzygy/6
+    SYZYGY = /mnt/Syzygy/345:/mnt/Syzygy/6
 endif
 DEFS += -DSYZYGY='"$(SYZYGY)"'
 

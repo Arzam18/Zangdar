@@ -22,6 +22,8 @@ public:
     //! \brief  Destructeur
     ~DataGen() {}
 
+    static U16 viri_move(MOVE move);
+
 private:
     void genfens(int thread_id, const std::string& str_file,
                  std::atomic<size_t>& total_fens,
@@ -31,7 +33,6 @@ private:
                      MOVE &move, I32 &score);
 
     static std::array<U08, 32> pack_board(const Board& board, U08 wdl);
-    static U16 viri_move(MOVE move);
 
     constexpr static int MIN_RANDOM_PLIES =     8;   // borne basse du tirage [MIN,MAX] par partie
     constexpr static int MAX_RANDOM_PLIES =     9;   // borne haute : 1 ply de plus alterne le camp du 1er coup réel

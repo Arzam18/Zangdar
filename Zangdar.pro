@@ -228,6 +228,7 @@ HEADERS += \
     src/NNUE.h \
     src/Search.h \
     src/SearchInfo.h \
+    src/TbRelabel.h \
     src/ThreadPool.h \
     src/Timer.h \
     src/TranspositionTable.h \
@@ -255,6 +256,7 @@ SOURCES += \
     src/MovePicker.cpp \
     src/NNUE.cpp \
     src/Search.cpp \
+    src/TbRelabel.cpp \
     src/ThreadPool.cpp \
     src/Timer.cpp \
     src/TranspositionTable.cpp \

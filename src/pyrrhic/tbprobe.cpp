@@ -818,6 +818,24 @@ unsigned tb_probe_wdl(
     return (unsigned)(v + 2);
 }
 
+int tb_probe_dtz(
+    uint64_t white,     uint64_t black,
+    uint64_t kings,     uint64_t queens,
+    uint64_t rooks,     uint64_t bishops,
+    uint64_t knights,   uint64_t pawns,
+    unsigned ep,        bool turn,
+    int     *success) {
+
+    PyrrhicPosition pos = {
+        white, black, kings,
+        queens, rooks, bishops,
+        knights, pawns, 0,
+        (uint8_t)ep, turn
+    };
+
+    return probe_dtz(&pos, success);
+}
+
 unsigned tb_probe_root(
     uint64_t white,     uint64_t black,
     uint64_t kings,     uint64_t queens,
