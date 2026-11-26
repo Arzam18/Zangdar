@@ -12,10 +12,10 @@
 
 /*  INCBIN embarque le fichier EVALFILE dans l'exécutable : gnetworkData, gnetworkEnd, gnetworkSize.
  *  file_network pointe sur ces octets (FT lu sur place) ; network, sur les couches L1-L3
- *  réordonnées par NNUE::init. Le namespace anonyme les rend privés à NNUE.cpp.
+ *  réordonnées par NNUE::init. Le namespace anonyme rend ces pointeurs privés à NNUE.cpp.
+ *  INCBIN reste hors de ce namespace : il définit ses symboles en assembleur sous leur nom C,
+ *  et GCC 15 donne un lien interne à un extern "C" déclaré dans un namespace anonyme.
  */
-
-namespace {
 
 #include "incbin/incbin.h"
 
@@ -26,6 +26,9 @@ namespace {
 INCBIN(network, EVALFILE);
 static_assert(INCBIN_ALIGNMENT >= alignof(Network),
               "octets embarqués moins alignés que Network : le cast serait invalide");
+
+namespace {
+
 const Network *file_network = reinterpret_cast<const Network *>(gnetworkData);
 
 // Couches L1-L3 réordonnées par NNUE::init, partagées en lecture seule par tous les threads
