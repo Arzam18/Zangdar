@@ -603,7 +603,7 @@ void Uci::parse_options(std::istringstream& iss)
         else if (option_name == "SyzygyPath")
         {
             // Pour mettre plusieurs chemins
-            // setoption name SyzygyPath value /mnt/Datas/Echecs/Syzygy/345:/mnt/Datas/Echecs/Syzygy/6
+            // setoption name SyzygyPath value /mnt/Syzygy/345:/mnt/Syzygy/6
 
             iss >> value;      // "value"
 

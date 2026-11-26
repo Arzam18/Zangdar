@@ -8,6 +8,7 @@
 #include "DataGen.h"
 #include "Cuckoo.h"
 #include "NNUE.h"
+#include "TbRelabel.h"
 
 // Globals
 TranspositionTable  transpositionTable(HASH_SIZE);
@@ -56,6 +57,18 @@ int main(int argCount, char* argValue[])
 
         DataGen(atoi(argValue[2]), atoi(argValue[3]), std::string{argValue[4]});
         std::cout << "fin datagen" << std::endl;
+    }
+
+    //  Correction des résultats d'un .bin par les tables Syzygy
+    //  appel : Zangdar tbrelabel <data.vf> <data.bin> <tables> [--partie]
+    else if (argCount > 1 && strcmp(argValue[1], "tbrelabel") == 0)
+    {
+        if (argCount < 5 || (argCount == 6 && strcmp(argValue[5], "--partie") != 0) || argCount > 6)
+        {
+            std::cout << "usage : Zangdar tbrelabel <data.vf> <data.bin> <tables rép1:rép2> [--partie]" << std::endl;
+            return 1;
+        }
+        return tb_relabel(argValue[2], argValue[3], argValue[4], argCount == 6);
     }
 
     //  UCI

@@ -128,6 +128,15 @@ unsigned tb_probe_wdl(
     uint64_t knights,   uint64_t pawns,
     unsigned ep,        bool     turn);
 
+/// DTZ du camp au trait (compteur des 50 coups supposé nul) ; *success == 0 si la sonde échoue
+int tb_probe_dtz(
+    uint64_t white,     uint64_t black,
+    uint64_t kings,     uint64_t queens,
+    uint64_t rooks,     uint64_t bishops,
+    uint64_t knights,   uint64_t pawns,
+    unsigned ep,        bool     turn,
+    int     *success);
+
 unsigned tb_probe_root(
     uint64_t white,    uint64_t black,
     uint64_t kings,    uint64_t queens,

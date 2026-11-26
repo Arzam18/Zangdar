@@ -701,6 +701,18 @@ public:
     //-----------------------------------------------------------------------------
     [[nodiscard]] inline bool is_draw(int ply) const noexcept { return ((is_repetition(ply) || fiftymoves())); }
 
+    //! \brief  Matériel insuffisant : KvK, KvN, KvB, KvNN (comme Ethereal). Utilisé par le datagen seulement
+    [[nodiscard]] inline bool is_insufficient_material() const noexcept
+    {
+        if (occupancy_p<PieceType::PAWN>() | occupancy_p<PieceType::ROOK>() | occupancy_p<PieceType::QUEEN>())
+            return false;
+        if (BB::count_bit(occupancy_c<WHITE>()) > 1 && BB::count_bit(occupancy_c<BLACK>()) > 1)
+            return false;
+        const Bitboard knights = occupancy_p<PieceType::KNIGHT>();
+        const Bitboard bishops = occupancy_p<PieceType::BISHOP>();
+        return BB::count_bit(knights | bishops) <= 1 || (bishops == 0 && BB::count_bit(knights) <= 2);
+    }
+
     bool upcoming_repetition(int ply) const;
 
 
