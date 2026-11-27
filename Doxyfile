@@ -14,6 +14,8 @@
 PROJECT_NAME         = Zangdar
 INPUT                = src
 RECURSIVE            = YES
+# incbin.h est un fichier tiers : ses commentaires ne sont pas à vérifier
+EXCLUDE              = src/incbin
 OUTPUT_DIRECTORY     = build-doc
 
 # On ne veut que les avertissements, pas de documentation lisible.
